@@ -70,6 +70,10 @@ The audio host owns one VoiceController and one shared microphone input.
 Other windows send Eventa commands and render snapshots. They do not create competing capture or playback runtimes.
 Consumers subscribe to the microphone input with their own abort signal. The last subscriber to leave releases the device.
 
+Voice requests project interruption records to event identity, session and turn IDs, cause, and playback progress.
+Stored turn objects can contain full request snapshots. Those snapshots and their images must not enter the control prompt.
+The projection preserves local records and chat history while preventing repeated snapshots from exhausting the model context.
+
 - `useVoiceStore` owns application routing, drafts, responses, and host command registration.
 - `useVoiceController` binds public controller state to Vue and moves the controller to the input of the selected device.
 - `useVoiceInput` maps hold and release controls to host commands.
@@ -84,9 +88,39 @@ Consumers subscribe to the microphone input with their own abort signal. The las
 - `useVoiceMessagesStore` owns voice message recordings and their attachment submission.
 - Hearing selects providers and converts captured PCM to each provider's upload format. It does not open the microphone.
 - Speech preserves existing chunked synthesis and bidirectional provider output.
+- Desktop MiniMax uses one bidirectional WebSocket per speech stream. The server receives text incrementally and determines sentence boundaries.
+  Each sentence supplies live PCM to the existing player, so playback can start before text EOF.
+  EOF flushes the final text. Cancellation releases both readers and the connection, and later audio cannot reach playback.
+  The desktop host installs the authenticated Eventa transport. Other clients and voice previews retain HTTP synthesis.
 - `createVoiceRephrasePlugin` rewrites final transcripts with a chat model through a checked transcript patch. The raw text stays in the transcript history. Each segment gets its own rewrite, so segment boundaries stay for later speaker labels. A reply with another segment count leaves the text unchanged.
 - `createVoiceEndJudgePlugin` ends a paused input early when a chat model reads its transcript as a finished message. The model is the rephrase model, or the chat model when no rephrase provider is set.
 - `createSpeakerEvidencePlugin` compares each automatic input with the owner's voiceprint while Speaker recognition is on. It writes the mean cosine of the speech as speaker evidence, and the IO trace of the input records it. It never changes an input, and the chat prompt does not include it.
+- `useSpeakerTrackerStore().filterTranscriber` checks captured speech before opening the transcription provider. It also controls verified automatic interruptions and rejected-input cancellation.
+- `prepareOwnerSpeech` checks one-second PCM windows with CAM++ and Sherpaw's 0.35 cosine threshold. Only finite matching scores pass.
+  Before the first match, rejected windows stay local. After it, rejected windows become silence and keep their timing.
+  Recording completion checks the remaining samples, including the final partial window of Push to Talk.
+  Voice messages use the same filter before the audio splits into transcription and attachment encoding.
+  Before admission, up to three seconds remain buffered for another comparison as one interval.
+  Only a matching interval can replay its prefix. A rejected prefix does not join a later independently matching window.
+  The VAD observer also retains three seconds before detection, so a quiet beginning can reach speaker verification.
+  Neither buffer adds a fixed delay. Owner verification stops active playback and synthesis before transcription completes.
+
+Speaker recognition covers automatic input, wake words, dictation, Push to Talk, and voice messages.
+Missing or changed voiceprints, model failures, and cancelled comparisons never expose unchecked audio to a provider.
+Changing the switch cancels active recordings. Deleting a voiceprint keeps filtering enabled until the user turns it off.
+The microphone still captures sound locally for comparison. Similar voices and overlapping speech can cause classification errors.
+Automatic interruption uses half-second voice windows. A matching owner utterance can stop playback before recording ends.
+The stage supplies scheduled speech PCM as a temporary playback reference to the same CAM++ Worker.
+After playback supplies a reference, admission requires an owner score above the threshold and above the playback score.
+The reference uses up to 1.5 seconds of output PCM. It stays in memory and replaces itself as speech arrives.
+During playback, an incomplete initial reference cannot authorize interruption. A short completed response does not block later user input.
+Model registration and comparison dispatch stay ordered. Waiting for a cancelled comparison never blocks the next input.
+This rule also applies when ordinary Speaker recognition is off. Without an enrolled owner, automatic interruption stays unavailable.
+The host captures response identities at input start. A delayed match keeps the current input and interrupts only those captured responses.
+Replies that start during verification remain active.
+Stage opens each voice response after the user message persists, so asynchronous memory preparation cannot expose an uncommitted input to interruption.
+External wake detectors choose a session but cannot supply interruption authorization. Stop and Push to Talk remain manual controls.
+CAM++ requires at least 250 ms. A final short tail borrows preceding samples for comparison only, so output audio is never duplicated.
 
 A pause of 1.2 seconds can end an input. With the end judge on, which is the default, the voice activity silence limit grows by 3 seconds.
 The judge then ends a finished message at the pause, and an unfinished one waits for the speaker to continue.
@@ -161,8 +195,9 @@ The model loads only when the catalog has a pronunciation for the pinned model. 
 While no listener runs, the preparation is `unconfigured`.
 
 `useSpeakerTrackerStore` owns the voice host's Sherpaw speaker tracker Worker. `acquire` downloads the pinned CAM++ pack and starts the Worker on first use.
-The tracker enrolls the saved voiceprint as speaker 0, and follows each change of it. `release` terminates the Worker.
-`preparation` reports `idle`, `preparing`, `ready`, or `error` for UI. No feature acquires the tracker yet.
+The tracker enrolls the saved voiceprint as speaker 0 and follows each change of it.
+Listening and captured recordings each retain the Worker. The last release terminates it.
+`preparation` reports `idle`, `preparing`, `ready`, or `error` for UI.
 
 `useVoiceprintStore` keeps the voiceprint of the device owner in local storage. Only one person can enroll.
 `useVoiceEnrollment` records one enrollment from the speech input of the calling window, keeps only the speech that Silero VAD finds, and saves the voiceprint.

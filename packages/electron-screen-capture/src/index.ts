@@ -3,6 +3,8 @@ import type { DesktopCapturerSource, SourcesOptions, systemPreferences } from 'e
 import { defineInvokeEventa } from '@moeru/eventa'
 
 export interface SerializableDesktopCapturerSource extends Pick<DesktopCapturerSource, 'id' | 'name' | 'display_id'> {
+  /** Identifies this window's catalog snapshot. Pass it with the selected source ID. */
+  catalogId: string
   appIcon?: Uint8Array
   thumbnail?: Uint8Array
 }
@@ -10,8 +12,9 @@ export interface SerializableDesktopCapturerSource extends Pick<DesktopCapturerS
 export interface ScreenCaptureSetSourceRequest {
   options: SourcesOptions
   sourceId: string
+  catalogId: string
   /**
-   * Timeout in milliseconds to release the setSourceMutex.
+   * Expires an unused selection after this many milliseconds. An active media request has no lease timeout.
    *
    * @default 5000
    */

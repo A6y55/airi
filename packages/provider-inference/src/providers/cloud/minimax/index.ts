@@ -1,3 +1,5 @@
+import type { ChatRequestOptions } from '../../../types'
+
 import { createMinimax, createMinimaxCn } from '@xsai-ext/providers/create'
 import { z } from 'zod'
 
@@ -27,6 +29,23 @@ const minimaxGlobalConfigSchema = z.object({
 
 type MinimaxGlobalConfig = z.input<typeof minimaxGlobalConfigSchema>
 
+/** M3.1 Flash requires thinking. The low-latency choice uses its supported low effort instead of the rejected disabled mode. */
+function withMinimaxReasoning(provider: ReturnType<typeof createMinimax>) {
+  return {
+    ...provider,
+    chat(model: string, options?: ChatRequestOptions) {
+      const request = provider.chat(model)
+      if (!options?.reasoning)
+        return request
+      if (model === 'MiniMax-M3.1-Flash')
+        return { ...request, reasoningEffort: options.reasoning === 'enabled' ? 'max' : 'low' }
+      if (model === 'MiniMax-M3')
+        return { ...request, thinking: { type: options.reasoning === 'enabled' ? 'adaptive' : 'disabled' } }
+      return request
+    },
+  }
+}
+
 export const providerMinimax = defineProvider<MinimaxCnConfig, 'minimax'>({
   id: 'minimax',
   name: 'MiniMax',
@@ -34,6 +53,7 @@ export const providerMinimax = defineProvider<MinimaxCnConfig, 'minimax'>({
   description: 'minimaxi.com',
   descriptionLocalize: ({ t }) => t('settings.pages.providers.provider.minimax.description'),
   tasks: ['chat'],
+  capabilities: { chat: { reasoning: { modes: ['enabled', 'disabled'] } } },
   icon: 'i-lobe-icons:minimax',
   iconColor: 'i-lobe-icons:minimax-color',
 
@@ -51,7 +71,7 @@ export const providerMinimax = defineProvider<MinimaxCnConfig, 'minimax'>({
     }),
   }),
   createProvider(config) {
-    return createMinimaxCn(config.apiKey, config.baseUrl)
+    return withMinimaxReasoning(createMinimaxCn(config.apiKey, config.baseUrl))
   },
 
   validationRequiredWhen(config) {
@@ -71,6 +91,7 @@ export const providerMinimaxGlobal = defineProvider<MinimaxGlobalConfig, 'minima
   description: 'minimax.io',
   descriptionLocalize: ({ t }) => t('settings.pages.providers.provider.minimax-global.description'),
   tasks: ['chat'],
+  capabilities: { chat: { reasoning: { modes: ['enabled', 'disabled'] } } },
   icon: 'i-lobe-icons:minimax',
   iconColor: 'i-lobe-icons:minimax-color',
 
@@ -88,7 +109,7 @@ export const providerMinimaxGlobal = defineProvider<MinimaxGlobalConfig, 'minima
     }),
   }),
   createProvider(config) {
-    return createMinimax(config.apiKey, config.baseUrl)
+    return withMinimaxReasoning(createMinimax(config.apiKey, config.baseUrl))
   },
 
   validationRequiredWhen(config) {

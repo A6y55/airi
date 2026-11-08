@@ -41,6 +41,8 @@ import {
 } from '../shared/eventa'
 import { electronPluginUpdateCapability, pluginProtocolListProviders, pluginProtocolListProvidersEventName } from '../shared/eventa/plugin/capabilities'
 import { electronPluginListXsaiTools } from '../shared/eventa/plugin/tools'
+import { electronOpenVisionWindow } from '../shared/eventa/vision'
+import { useVisionCaptureSettingsStore } from './stores/vision-capture-settings'
 import { resolveRendererWindowContext } from './window-context'
 
 const inference = vi.hoisted(() => ({
@@ -173,6 +175,8 @@ async function renderStage(routePath: string, search: string) {
   const bridge = connectElectron()
   const reports: PluginCapabilityPayload[] = []
   const errors: unknown[] = []
+  const openVisionWindow = vi.fn()
+  defineInvokeHandler(bridge.main, electronOpenVisionWindow, openVisionWindow)
   defineInvokeHandler(bridge.main, electronPluginUpdateCapability, (payload) => {
     reports.push(payload)
     return { ...payload, updatedAt: Date.now() }
@@ -331,6 +335,7 @@ async function renderStage(routePath: string, search: string) {
     leader,
     listProviders: defineInvoke(bridge.main, pluginProtocolListProviders),
     pinia,
+    openVisionWindow,
     reports,
     runtime: rendererRuntime,
   }
@@ -370,12 +375,38 @@ describe('renderer startup', () => {
     await expect(stage.listProviders()).resolves.toContainEqual({ name: 'Kokoro TTS' })
     await expect.poll(() => inference.loadModel.mock.calls, { timeout: 5000 }).toHaveLength(1)
     expect(inference.loadModel).toHaveBeenCalledWith('q8', 'wasm', { signal: expect.any(AbortSignal) })
+    expect(stage.openVisionWindow).not.toHaveBeenCalled()
+  }, 15000)
+
+  it('opens startup observation only after opt-in and never restarts it from later settings changes', async () => {
+    localStorage.setItem('settings/vision/restore-on-startup', 'true')
+    localStorage.setItem('settings/vision/enabled', 'true')
+    const stage = await renderStage('/', '?synced-leader=true')
+    await expect.poll(() => stage.openVisionWindow.mock.calls.length, { timeout: 5000 }).toBe(1)
+    const preferences = useVisionCaptureSettingsStore(stage.pinia)
+    preferences.restoreOnStartup = false
+    await nextTick()
+    preferences.restoreOnStartup = true
+    useVisionStore(stage.pinia).enabled = false
+    await nextTick()
+    useVisionStore(stage.pinia).enabled = true
+    await nextTick()
+    expect(stage.openVisionWindow).toHaveBeenCalledTimes(1)
+  }, 15000)
+
+  it('keeps startup observation closed when Vision is disabled', async () => {
+    localStorage.setItem('settings/vision/restore-on-startup', 'true')
+    localStorage.setItem('settings/vision/enabled', 'false')
+    const stage = await renderStage('/', '?synced-leader=true')
+    await expect.poll(() => inference.loadModel.mock.calls, { timeout: 5000 }).toHaveLength(1)
+    expect(stage.openVisionWindow).not.toHaveBeenCalled()
   }, 15000)
 
   // Chat and widgets follow the main Stage window. Each case keeps the query
   // that its Electron window passes, so startup takes the same leadership and
   // runtime branches as production.
   it('starts chat as a minimal follower', async () => {
+    localStorage.setItem('settings/vision/restore-on-startup', 'true')
     const stage = await renderStage('/chat', '?stage-runtime=minimal&synced-leader=false')
     const sessions = useChatSessionStore(stage.pinia)
     const leaderSessions = stage.leader && useChatSessionStore(stage.leader.pinia)
@@ -390,6 +421,7 @@ describe('renderer startup', () => {
     expect(stage.initializeCharacter).not.toHaveBeenCalled()
     expect(stage.reports).toEqual([])
     expect(inference.loadModel).not.toHaveBeenCalled()
+    expect(stage.openVisionWindow).not.toHaveBeenCalled()
   }, 15000)
 
   it('starts widgets as a full follower without the character orchestrator', async () => {

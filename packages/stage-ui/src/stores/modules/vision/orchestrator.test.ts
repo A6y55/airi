@@ -41,6 +41,7 @@ describe('vision orchestrator', () => {
     runVisionInference.mockResolvedValue('Frame summary')
 
     const visionStore = useVisionStore()
+    visionStore.enabled = true
     visionStore.activeProvider = 'mock-provider'
     visionStore.activeModel = 'mock-model'
   })
@@ -104,5 +105,40 @@ describe('vision orchestrator', () => {
     })).rejects.toThrow('Vision inference failed')
 
     expect(store.lastError).toBe('Vision inference failed')
+  })
+
+  it('discards a completed inference after capture stops', async () => {
+    const result = Promise.withResolvers<string>()
+    runVisionInference.mockReturnValueOnce(result.promise)
+    const controller = new AbortController()
+    const store = useVisionOrchestratorStore()
+    const request = store.processCapture({
+      imageDataUrl: 'data:image/jpeg;base64,frame',
+      workloadId: 'screen:interpret',
+      publishContext: true,
+      signal: controller.signal,
+    })
+    controller.abort()
+    result.resolve('Late observation')
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    expect(sendContextUpdate).not.toHaveBeenCalled()
+    expect(store.lastResultText).toBe('')
+    expect(store.lastError).toBeNull()
+  })
+
+  it('discards a completed inference after Vision is disabled', async () => {
+    const result = Promise.withResolvers<string>()
+    runVisionInference.mockReturnValueOnce(result.promise)
+    const store = useVisionOrchestratorStore()
+    const request = store.processCapture({
+      imageDataUrl: 'data:image/jpeg;base64,frame',
+      workloadId: 'screen:interpret',
+      publishContext: true,
+    })
+    useVisionStore().enabled = false
+    result.resolve('Late observation')
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    expect(sendContextUpdate).not.toHaveBeenCalled()
+    expect(store.lastResultText).toBe('')
   })
 })

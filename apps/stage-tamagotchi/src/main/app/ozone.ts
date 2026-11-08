@@ -19,3 +19,13 @@ export function resolveIsWayland(params: {
 
   return Boolean(params.env?.WAYLAND_DISPLAY || params.env?.XDG_SESSION_TYPE === 'wayland')
 }
+
+/** XWayland does not restore global pointer tracking inside a Wayland desktop session. */
+export function supportsGlobalCursorPosition(params: Parameters<typeof resolveIsWayland>[0] & { platform: string }): boolean {
+  if (params.platform !== 'linux')
+    return true
+
+  return !resolveIsWayland(params)
+    && !params.env?.WAYLAND_DISPLAY
+    && params.env?.XDG_SESSION_TYPE !== 'wayland'
+}

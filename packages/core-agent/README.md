@@ -164,8 +164,11 @@ const result = await input.end()
 - `SpeechInputAttempt` exists during playback fade and until the source delivers audio, which includes microphone permission.
 - `SpeechInput` exists after capture admission. It holds the transcript document: raw text, corrected text, and speaker evidence.
 - `end()` completes recording. `cancel(reason)` rejects later publication from the attempt.
+- A transcriber can cancel its PCM reader during cleanup. Its output decides the transcription result, so cleanup cannot replace an ASR error with cancellation.
+- Explicit attempt cancellation and capture failures still settle immediately.
 - `interrupt({ turns, cause })` targets named responses and reports silence separately from agent delivery.
 - The notification receiver deduplicates by event ID. Its acknowledgment means durable receipt, without another user message or response.
+- Responses and interruption receipts copy only `sessionId` and `turnId` from their turn argument. Extra chat context and media never enter control records.
 - `audio` is a shared `AudioInput`. Attempts and plugins subscribe to it. The controller never closes it.
 - `replaceAudio(input)` cancels active attempts and moves plugin observations to the new input.
 - A transcriber receives continuous PCM. An adapter that needs a file or a MediaStream converts the PCM itself.

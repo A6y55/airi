@@ -589,6 +589,15 @@ devtools:
     widgets-calling:
       title: 小组件调用
 screen-capture:
+  observation:
+    title: 屏幕观察
+    open: 打开屏幕观察
+    host-description: 观察在独立窗口中运行，切换设置页面不会停止。请保持此窗口打开或最小化，关闭此窗口会停止采集。
+    startup-label: 启动时打开屏幕观察
+    startup-description: 默认关闭。启用 Vision 时，启动后打开来源选择流程。系统可能要求重新授权。
+    resume-description: 选择来源后，将按保存的选项恢复观察。系统可能再次请求屏幕权限，不会自动选择来源。
+    waiting: 等待选择来源
+    disabled: Vision 已禁用。请在模块设置中启用后再观察屏幕。
   permissions-prompt:
     title: 屏幕捕获
     description: 要捕获屏幕或窗口，需要屏幕和系统音频录制权限。

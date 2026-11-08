@@ -184,6 +184,8 @@ export class SpeechInputAttempt {
 
     this.accepted!.finishTranscription()
     const captured = await capture.done
+    if (captured.status === 'cancelled')
+      this.cancel(captured.reason)
     return captured.status === 'finished' && !this.abort.signal.aborted
   }
 
@@ -245,8 +247,8 @@ export class SpeechInputAttempt {
     void recording.done.then((outcome) => {
       if (outcome.status === 'failed')
         this.settle({ status: 'failed', stage: 'capture', error: outcome.error })
-      if (outcome.status === 'cancelled')
-        this.cancel(outcome.reason)
+      // Providers can cancel their PCM reader before reporting an error. Their output owns the transcription outcome.
+      // Explicit input cancellation already settles the attempt before it cancels capture.
       if (outcome.status === 'finished' && this.current.phase === 'capturing')
         void this.end()
     })

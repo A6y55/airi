@@ -57,6 +57,42 @@ it('uses ordered VAD signals to capture, stream transcription, and submit to the
   await controller.close()
 })
 
+it('replays a quiet beginning when VAD detects speech more than two seconds later', async () => {
+  const source = createPushStream<PcmBlock>()
+  const audio = new AudioInput({ live: true, open: () => source.stream }, { historyMs: 360 })
+  const received: number[] = []
+  const detect = vi.fn(async (window: PcmBlock) => window.channels[0][0])
+  const submit = vi.fn(async () => ({ status: 'committed' as const, messageId: 'complete-utterance' }))
+  const controller = new VoiceController({ audio, submit, transcriber: () => ({
+    transcribe: request => new ReadableStream<TranscriptionEvent>({ async start(output) {
+      for await (const block of request.audio)
+        received.push(...block.channels[0])
+      output.enqueue({ type: 'update', revision: 1, segments: [{ id: 'text', revision: 1, text: 'Complete utterance', final: true, tokens: [] }] })
+      output.enqueue({ type: 'complete', revision: 1 })
+      output.close()
+    } }),
+  }) })
+  controller.use(createVoiceActivityPlugin({
+    detect,
+    preRollMs: 3000,
+    target: () => ({ sessionId: 'owner', interruptTurns: [] }),
+    minSpeechMs: 32,
+    silenceMs: 64,
+  }), { grants: ['input-control', 'cancel-input'] })
+  await Promise.resolve()
+  source.write({ range: { sourceId: 'mic', startFrame: 0, endFrame: 2080 }, sampleRate: 1000, channels: [new Float32Array(2080).fill(0.25)] })
+  await expect.poll(() => detect.mock.calls.length).toBe(65)
+  expect(controller.activeInput).toBeUndefined()
+  source.write({ range: { sourceId: 'mic', startFrame: 2080, endFrame: 2112 }, sampleRate: 1000, channels: [new Float32Array(32).fill(0.8)] })
+  await expect.poll(() => controller.activeInput?.state.phase).toBe('capturing')
+  const attempt = controller.activeInput!
+  source.write({ range: { sourceId: 'mic', startFrame: 2112, endFrame: 2176 }, sampleRate: 1000, channels: [new Float32Array(64)] })
+  expect(await attempt.done).toEqual({ status: 'committed', messageId: 'complete-utterance' })
+  expect(received.slice(0, 2080)).toEqual(Array.from(new Float32Array(2080).fill(0.25)))
+  expect(received).toHaveLength(2176)
+  await controller.close()
+})
+
 it('rejects playback echo and opens the matched character input only after playback fades', async () => {
   const frames = createPushStream<PcmBlock>()
   const audio = new AudioInput({ live: true, open: () => frames.stream })

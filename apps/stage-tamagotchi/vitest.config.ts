@@ -14,6 +14,15 @@ import unoConfig from './uno.config'
 
 export default defineConfig({
   root: import.meta.dirname,
+  // Stage imports model drivers and synchronization code. Prebundle them so browser regressions do not reload during execution.
+  optimizeDeps: {
+    include: [
+      '@proj-airi/stage-ui > pinia-plugin-synced',
+      '@proj-airi/stage-ui-mmd > @moeru/three-mmd-physics-ammo',
+      '@proj-airi/stage-ui-mmd > three-stdlib',
+      '@proj-airi/stage-ui-live2d > @pixi/constants',
+    ],
+  },
   plugins: [
     Info(),
     vue(),

@@ -1,10 +1,13 @@
 import type { MaybeRefOrGetter } from 'vue'
 
+import { errorMessageFrom } from '@moeru/std'
 import { electron } from '@proj-airi/electron-eventa'
 import { useElectronEventaInvoke, useElectronMouse, useElectronRelativeMouse } from '@proj-airi/electron-vueuse'
 import { useEventListener, useMutationObserver } from '@vueuse/core'
 import { parse } from 'culori'
 import { nextTick, shallowRef, toValue, watch } from 'vue'
+
+import { electronAppSupportsGlobalCursorPosition } from '../../shared/eventa'
 
 function paintsBackground(style: CSSStyleDeclaration) {
   if (style.backgroundImage !== 'none')
@@ -91,15 +94,14 @@ export async function dismissOverlays() {
  * - The page painted under the cursor, and the hand has not pressed or moved
  *   more than {@link handJitter} on the screen since.
  *
- * The passive area never takes the pointer, and it is inert while it is set,
- * so keyboard focus cannot reach it either. It fades out while the cursor is
+ * With global cursor tracking, the passive area never takes the pointer. It stays inert,
+ * so keyboard focus cannot reach it. It fades out while the cursor is
  * over something that it paints. It counts as painted while it is faded out,
  * so the fade does not end only because it hid the content.
  *
- * The main process creates the window click-through. The cursor position comes
- * from the main process, not from DOM events, because a click-through window
- * receives no mouse events on Linux. Each position is hit-tested against the
- * document, which also answers while the window is click-through.
+ * Linux does not forward mouse events to click-through windows, so hit testing uses the main process's cursor.
+ * Wayland sessions can stop reporting that cursor, including with an XWayland backend.
+ * There, visible content keeps the full window interactive. Hidden content releases input without waiting for pointer movement.
  *
  * The page can also change under a cursor that stays still. A dialog or menu
  * that opens or closes runs the hit test again, and so does the returned
@@ -109,6 +111,8 @@ export async function dismissOverlays() {
 export function useChatFloatingClickThrough(options: {
   /** Whether the chat window stays above other windows. */
   pinned: MaybeRefOrGetter<boolean>
+  /** Whether interactive content is shown while the native window remains mapped. */
+  contentVisible: MaybeRefOrGetter<boolean>
   /** Content that takes no pointer and no keyboard focus, such as a passive message feed. */
   passiveArea?: MaybeRefOrGetter<HTMLElement | null | undefined>
 }) {
@@ -117,6 +121,10 @@ export function useChatFloatingClickThrough(options: {
   // position tells whether the hand moved.
   const hand = useElectronMouse()
   const setIgnoreMouseEvents = useElectronEventaInvoke(electron.window.setIgnoreMouseEvents)
+  const globalCursorAvailable = shallowRef(false)
+  useElectronEventaInvoke(electronAppSupportsGlobalCursorPosition)()
+    .then(value => globalCursorAvailable.value = value)
+    .catch(error => console.warn('[Floating window] Failed to detect global cursor support:', errorMessageFrom(error)))
 
   /** Screen position of the hand when the cursor last found paint; a press clears it. */
   let paintedAt: { x: number, y: number } | undefined
@@ -153,6 +161,11 @@ export function useChatFloatingClickThrough(options: {
 
   function takesPointer() {
     const passiveArea = toValue(options.passiveArea) ?? undefined
+    if (!globalCursorAvailable.value) {
+      if (passiveArea)
+        passiveArea.style.opacity = ''
+      return pointerHeld.value || toValue(options.contentVisible)
+    }
     const target = elementUnderCursor(passiveArea)
     const inPassiveArea = target !== null && passiveArea !== undefined && passiveArea.contains(target)
     if (passiveArea)
@@ -218,7 +231,7 @@ export function useChatFloatingClickThrough(options: {
 
   // Dialogs and menus mount straight into the body.
   useMutationObserver(document.body, () => hitTest(), { childList: true })
-  watch([() => toValue(options.pinned), () => toValue(options.passiveArea), pointerHeld, x, y], () => hitTest(), { immediate: true })
+  watch([() => toValue(options.pinned), () => toValue(options.passiveArea), () => toValue(options.contentVisible), globalCursorAvailable, pointerHeld, x, y], () => hitTest(), { immediate: true })
 
   return { hitTest }
 }

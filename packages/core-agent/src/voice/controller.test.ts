@@ -62,6 +62,39 @@ describe('voiceController input', () => {
     await controller.close()
   })
 
+  // ROOT CAUSE:
+  // Provider cleanup cancelled capture before its transcription error reached the attempt.
+  // Capture cancellation cannot replace the provider's terminal error.
+  it.each(['before', 'after'] as const)('preserves a provider error when its PCM reader cancels %s reporting it', async (order) => {
+    const source = createPushStream<PcmBlock>()
+    const audio = new AudioInput(pcmSource(source.stream))
+    const failure = new Error('Remote sent 429 response: conn limit (1041)')
+    const submit = vi.fn()
+    const controller = new VoiceController({
+      audio,
+      transcriber: () => ({
+        transcribe: request => new ReadableStream<TranscriptionEvent>({ async start(output) {
+          const reader = request.audio.getReader()
+          await reader.read()
+          if (order === 'before')
+            await reader.cancel('Provider cleanup')
+          output.error(failure)
+          if (order === 'after')
+            await reader.cancel('Provider cleanup')
+          reader.releaseLock()
+        } }),
+      }),
+      submit,
+    })
+    const attempt = controller.beginInput({ sessionId: 'alice', interruptTurns: [], start: { kind: 'after-silence' } })
+    source.write({ range: { sourceId: 'mic', startFrame: 0, endFrame: 4 }, sampleRate: 1000, channels: [new Float32Array(4)] })
+
+    expect(await attempt.done).toEqual({ status: 'failed', stage: 'transcription', error: failure })
+    expect(submit).not.toHaveBeenCalled()
+    expect(controller.activeInput).toBeUndefined()
+    await controller.close()
+  })
+
   it('cancels an input that waits for the old source and releases that source after replacement', async () => {
     const oldClosed = vi.fn()
     const oldAudio = new AudioInput(pcmSource(createPushStream<PcmBlock>().stream, oldClosed))

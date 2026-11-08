@@ -16,6 +16,7 @@ import messages from '@proj-airi/i18n/locales'
 
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { Format, LogLevel, setGlobalFormat, setGlobalHookPostLog, setGlobalLogLevel, useLogg } from '@guiiai/logg'
+import { defineInvokeHandler } from '@moeru/eventa'
 import { createContext } from '@moeru/eventa/adapters/electron/main'
 import { hasSelectedScreenCaptureSource, initScreenCaptureForMain } from '@proj-airi/electron-screen-capture/main'
 import { app, ipcMain, protocol, session } from 'electron'
@@ -25,6 +26,7 @@ import { isLinux } from 'std-env'
 
 import devIcon from '../../resources/icon-dev.png?asset'
 
+import { electronOpenVisionWindow } from '../shared/eventa/vision'
 import { openDebugger, setupDebugger } from './app/debugger'
 import { nullFileLoggerHandle, setupFileLogger } from './app/file-logger'
 import { resolveIsWayland } from './app/ozone'
@@ -39,6 +41,7 @@ import { createI18n } from './libs/i18n'
 import { setupAppleSpeechTranscriptionService } from './services/airi/apple-speech-transcription'
 import { setupAppleVisionService } from './services/airi/apple-vision'
 import { setupServerChannel } from './services/airi/channel-server'
+import { setupCompanion } from './services/airi/companion'
 import { setupComputerUse } from './services/airi/computer-use'
 import { setupGodotStageManager } from './services/airi/godot-stage'
 import { setupHomeAssistant } from './services/airi/home-assistant'
@@ -251,6 +254,7 @@ app.whenReady().then(async () => {
   setupSherpawModelAssetsProtocol(getRendererRoot)
   setupSherpawModelAssets(createContext(ipcMain).context)
   setupPermissionHandlers(session.defaultSession, hasSelectedScreenCaptureSource)
+  void setupCompanion().catch(error => log.withError(error).error('Failed to start companion services'))
 
   // Initialize file logger and register the hook
   fileLogger = await setupFileLogger()
@@ -432,6 +436,21 @@ app.whenReady().then(async () => {
         ...dependsOn,
         getMainWindow: () => userFacingMainWindow,
         onWindowCreated: trackExtensionManagementWindow,
+      })
+      const visionWindow = setupSettingsWindowReusableFunc({
+        ...dependsOn,
+        surface: 'vision',
+        getMainWindow: () => userFacingMainWindow,
+      })
+      const { context } = createContext(ipcMain)
+      let restorationAttempted = false
+      defineInvokeHandler(context, electronOpenVisionWindow, async (request, options) => {
+        if (request.restore) {
+          if (options?.raw.ipcMainEvent?.sender !== userFacingMainWindow?.webContents || restorationAttempted)
+            return
+          restorationAttempted = true
+        }
+        await visionWindow.openWindow()
       })
       // Every settings entry point asks this manager, so the fullscreen mode decides here where settings open.
       return { ...settingsWindowManager, openWindow: openSettings }

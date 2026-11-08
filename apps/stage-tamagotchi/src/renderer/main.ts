@@ -14,6 +14,7 @@ import { browserAuthorizationHandler, registerAuthorizationHandler } from '@proj
 import { piniaPluginTracing, setupSynced } from '@proj-airi/stage-ui/libs/pinia'
 import { configureAnalyticsAdapter } from '@proj-airi/stage-ui/libs/product-signals'
 import { settingsSearch } from '@proj-airi/stage-ui/libs/settings-search'
+import { configureProviderStorage } from '@proj-airi/stage-ui/stores/providers/config'
 import { MotionPlugin } from '@vueuse/motion'
 import { createPinia } from 'pinia'
 import { setupLayouts } from 'virtual:generated-layouts'
@@ -24,6 +25,8 @@ import { handleHotUpdate, routes } from 'vue-router/auto-routes'
 import App from './App.vue'
 
 import { electronWindowBackdropUpdate } from '../shared/eventa'
+import { initializeMinimaxSpeech } from './bridges/minimax-speech'
+import { initializeProviderStorage } from './bridges/provider-storage'
 import { nestFullscreenSurfaces } from './components/fullscreen/surfaces'
 import { createWindowBackdropHost } from './composables/window-backdrop'
 import { i18n } from './modules/i18n'
@@ -92,19 +95,31 @@ if (import.meta.hot) {
   })
 }
 
-createApp(App)
-  .use(synced.vue)
-  .use(MotionPlugin)
-  // TODO: Fix autoAnimatePlugin type error
-  .use(autoAnimatePlugin as unknown as Plugin)
-  .use(router)
-  .use(pinia)
-  .use(PiniaColada)
-  .use(i18n)
-  .use(Tres)
-  .use(trackButtonPlugin)
-  // The stage window registers a global hold shortcut. Every window shares this app, so the settings window offers the mode too.
-  .provide(pushToTalkTriggerKey, true)
-  // Translucent surfaces in every window get native glass where the platform has it.
-  .provide(backdropSurfaceHostKey, createWindowBackdropHost(useElectronEventaInvoke(electronWindowBackdropUpdate)))
-  .mount('#app')
+async function mountApp() {
+  configureProviderStorage(await initializeProviderStorage(windowContext.leadership))
+  initializeMinimaxSpeech()
+
+  createApp(App)
+    .use(synced.vue)
+    .use(MotionPlugin)
+    // TODO: Fix autoAnimatePlugin type error
+    .use(autoAnimatePlugin as unknown as Plugin)
+    .use(router)
+    .use(pinia)
+    .use(PiniaColada)
+    .use(i18n)
+    .use(Tres)
+    .use(trackButtonPlugin)
+    // The stage window registers a global hold shortcut. Every window shares this app, so the settings window offers the mode too.
+    .provide(pushToTalkTriggerKey, true)
+    // Translucent surfaces in every window get native glass where the platform has it.
+    .provide(backdropSurfaceHostKey, createWindowBackdropHost(useElectronEventaInvoke(electronWindowBackdropUpdate)))
+    .mount('#app')
+}
+
+void mountApp().catch(() => {
+  const error = document.createElement('p')
+  error.setAttribute('role', 'alert')
+  error.textContent = i18n.global.t('tamagotchi.companion.credentials-load-failed')
+  document.body.replaceChildren(error)
+})

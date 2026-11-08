@@ -22,6 +22,7 @@ import { providerGroq } from './cloud/groq'
 import { providerMimo } from './cloud/mimo'
 import { providerMimoAudioSpeech, providerMimoAudioTranscription } from './cloud/mimo-audio'
 import { providerMinimax, providerMinimaxGlobal } from './cloud/minimax'
+import { providerMinimaxAudioTranscription } from './cloud/minimax-audio-transcription'
 import { providerMinimaxSpeech } from './cloud/minimax-speech'
 import { providerMistralAI } from './cloud/mistral-ai'
 import { providerModelScope } from './cloud/modelscope'
@@ -108,6 +109,7 @@ export const portableProviderDefinitions = eraseProviderDefinitions(
   providerGoogleGenerativeAI,
   providerGroq,
   providerMinimax,
+  providerMinimaxAudioTranscription,
   providerMinimaxGlobal,
   providerMinimaxSpeech,
   providerMimo,

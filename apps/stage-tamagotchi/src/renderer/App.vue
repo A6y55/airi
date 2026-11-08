@@ -2,6 +2,7 @@
 import type { ArtistrySyncPayload } from '@proj-airi/stage-shared'
 
 import { defineInvokeHandler } from '@moeru/eventa'
+import { errorMessageFrom } from '@moeru/std'
 import { useElectronEventaContext, useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
 import { themeColorFromValue, useThemeColor } from '@proj-airi/stage-layouts/composables/theme-color'
 import { artistrySyncConfig } from '@proj-airi/stage-shared'
@@ -64,10 +65,12 @@ import {
   electronPluginUnload,
 } from '../shared/eventa/plugin/host'
 import { electronPluginToolsChanged } from '../shared/eventa/plugin/tools'
+import { electronOpenVisionWindow } from '../shared/eventa/vision'
 import { initializeElectronAuthCallbackBridge } from './bridges/electron-auth-callback'
 import { initializeIOTraceHubBridge } from './bridges/io-trace-hub'
 import { initializeStageThreeRuntimeTraceBridge } from './bridges/stage-three-runtime-trace'
 import { useLanguage } from './composables/use-language'
+import { useCompanionStore } from './stores/companion'
 import { useFullscreenStore } from './stores/fullscreen'
 import { useServerChannelSettingsStore } from './stores/settings/server-channel'
 import { useStageWindowLifecycleStore } from './stores/stage-window-lifecycle'
@@ -77,6 +80,7 @@ import {
   useTamagotchiMcpToolsStore,
   useTamagotchiPluginToolsStore,
 } from './stores/tools'
+import { useVisionCaptureSettingsStore } from './stores/vision-capture-settings'
 import { resolveInitialRendererRoutePath, resolveRendererWindowContext } from './window-context'
 
 const { isDark: dark } = useTheme()
@@ -110,6 +114,7 @@ const setLocale = useElectronEventaInvoke(i18nSetLocale)
 const windowContext = resolveRendererWindowContext()
 const initialRoutePath = resolveInitialRendererRoutePath(route.path)
 const chatStore = useChatStore()
+const companion = useCompanionStore()
 const builtinToolsStore = useTamagotchiBuiltinToolsStore()
 const homeAssistantStore = useTamagotchiHomeAssistantStore()
 const mcpToolsStore = useTamagotchiMcpToolsStore()
@@ -404,6 +409,17 @@ onMounted(async () => {
 
   await fullStageRuntime?.initialize()
   await chatStreamView?.initializeStreamView()
+
+  // Only startup restores observation. Later settings snapshots never restart a stopped capture.
+  if (windowContext.leadership === 'leader-only' && useVisionStore().enabled && useVisionCaptureSettingsStore().restoreOnStartup) {
+    try {
+      await useElectronEventaInvoke(electronOpenVisionWindow)({ restore: true })
+    }
+    catch (error) {
+      toast.error(errorMessageFrom(error) ?? 'Unknown error')
+    }
+  }
+  await companion.initialize()
 })
 
 watch(themeColorsHue, () => {
@@ -418,6 +434,7 @@ onUnmounted(() => {
   stopIOTraceHubBridge()
   stopModelAssetStatus()
   stopLeadershipListener?.()
+  companion.dispose()
   chatStore.dispose()
   fullStageRuntime?.dispose()
   void chatStreamView?.dispose()

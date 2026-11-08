@@ -88,13 +88,14 @@ const { isOutside: cursorOutsideHistory } = useElectronMouseInElement(computed((
 // the cursor instead, so there the cursor does not bring them back.
 const expireMessages = computed(() => composerFolded.value && (passiveFeed.value || cursorOutsideHistory.value))
 const expiredBefore = useDanmakuFeedExpiry(danmaku, expireMessages)
-const { hitTest } = useChatFloatingClickThrough({
-  pinned: () => state.value.pinned,
-  passiveArea: () => passiveFeed.value ? interactiveArea.value?.historyLayer : undefined,
-})
 // The content stays mounted while it is hidden, so a fold or a move to the
 // other side keeps the unsent draft, attachments and reply target.
 const contentShown = computed(() => !state.value.folded && !state.value.relocating)
+const { hitTest } = useChatFloatingClickThrough({
+  pinned: () => state.value.pinned,
+  contentVisible: contentShown,
+  passiveArea: () => passiveFeed.value ? interactiveArea.value?.historyLayer : undefined,
+})
 // Menus and dialogs close as the content hides, so they neither stay on
 // screen during the fold nor come back with the next unfold.
 watch(contentShown, (shown) => {

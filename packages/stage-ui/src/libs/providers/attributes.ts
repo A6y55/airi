@@ -75,6 +75,7 @@ const providerAttributesById = {
   'mimo-audio-speech': paidCloud,
   'mimo-audio-transcription': paidCloud,
   'minimax': paidCloud,
+  'minimax-audio-transcription': paidCloud,
   'minimax-global': paidCloud,
   'minimax-speech': paidCloud,
   'mistral-ai': paidCloud,

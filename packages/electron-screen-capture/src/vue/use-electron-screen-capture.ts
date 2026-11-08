@@ -31,16 +31,20 @@ export function useElectronScreenCapture(context: ReturnType<typeof createContex
   async function selectWithSource<R>(
     selectFn: (sources: SerializableDesktopCapturerSource[]) => string,
     useFn: () => Promise<R>,
-    request?: Omit<ScreenCaptureSetSourceRequest, 'options' | 'sourceId'>,
+    request?: Omit<ScreenCaptureSetSourceRequest, 'options' | 'sourceId' | 'catalogId'>,
   ): Promise<R> {
     const sources = await getSources()
     const sourceId = selectFn(sources)
+    const source = sources.find(source => source.id === sourceId)
+    if (!source)
+      throw new Error('The selected screen source is not in this catalog')
 
     let handle: string | undefined
     try {
       handle = await setSource({
         options: toRaw(toValue(sourcesOptions)),
         sourceId,
+        catalogId: source.catalogId,
         timeout: request?.timeout,
       })
       return await useFn()

@@ -68,7 +68,7 @@ The Voiceprint settings page tells the user what a voiceprint is, that it stays 
 
 ## Consequences
 
-- Speaker recognition reads the voiceprint through `useSpeakerTrackerStore`, as `2026-10-15-speaker-evidence.md` describes. The speaker gates read it later.
+- Speaker recognition reads the voiceprint through `useSpeakerTrackerStore` and filters audio before transcription or attachment encoding. See `2026-10-15-speaker-evidence.md`.
 - The recording uses the processed speech input. The Sherpaw tuning used unprocessed audio. The voiceprint measurement in the Sherpaw sandbox decides whether this choice stays. A change of input makes saved voiceprints outdated, because the record names its input.
 - An enrollment with two voices fails with the tracker's error, and the user records again alone.
 - The lease does not stop speech output. If the character speaks during the recording, echo cancellation must remove the voice, or the tracker rejects the recording. How much echo cancellation removes in a second window is not measured.

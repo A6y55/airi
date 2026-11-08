@@ -1,6 +1,6 @@
 import type { TtsRequest } from '@proj-airi/pipelines-audio'
 
-import type { SpeechAudio, StreamingTranscriber, TranscriptionEvent } from '../../index'
+import type { SpeechAudio, StreamingTranscriber, TranscriptionEvent, VoiceInterruptionEvent } from '../../index'
 
 import { AudioInput, Playback } from '@proj-airi/pipelines-audio'
 import { createPushStream } from '@proj-airi/stream-kit'
@@ -48,6 +48,32 @@ describe('voiceController output', () => {
 
     expect(await interruption.silenced).toEqual([{ turn, status: 'silent' }])
     expect(await interruption.done).toEqual({ status: 'recorded', notifications: [] })
+    await controller.close()
+  })
+
+  it('excludes chat snapshots and images from playback identities and durable interruption records', async () => {
+    const playback = new Playback({ nowMs: () => 0, play: () => {
+      throw new Error('No audio expected')
+    } })
+    const recordInterruption = vi.fn(async (_event: VoiceInterruptionEvent) => ({ status: 'queued' as const }))
+    const controller = new VoiceController({ speech: () => ({ playback, synthesize: async () => new Blob() }), recordInterruption })
+    const turn = {
+      sessionId: 'alice',
+      turnId: 'reply',
+      message: 'Private conversation text',
+      contexts: [{ content: [{ type: 'image', data: 'data:image/png;base64,PRIVATE-SCREENSHOT' }] }],
+      composedMessage: [{ role: 'user', content: 'Earlier conversation' }],
+    }
+    const response = controller.openResponse(turn)
+    const identity = { sessionId: 'alice', turnId: 'reply' }
+    expect(response.turn).toEqual(identity)
+
+    const interruption = controller.interrupt({ turns: [turn, turn], cause: 'speech-input' })
+    expect((await interruption.done).status).toBe('recorded')
+    expect(recordInterruption).toHaveBeenCalledOnce()
+    expect(recordInterruption.mock.calls[0][0].turn).toEqual(identity)
+    expect((await interruption.silenced)[0].turn).toEqual(identity)
+    expect(JSON.stringify(recordInterruption.mock.calls)).not.toContain('PRIVATE-SCREENSHOT')
     await controller.close()
   })
 

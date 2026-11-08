@@ -18,7 +18,7 @@ export function useHostScreenCapture(_sourcesOptions: MaybeRefOrGetter<SourcesOp
     selectWithSource: async <R>(
       _select: (sources: SerializableDesktopCapturerSource[]) => string,
       _use: () => Promise<R>,
-      _request?: Omit<ScreenCaptureSetSourceRequest, 'options' | 'sourceId'>,
+      _request?: Omit<ScreenCaptureSetSourceRequest, 'options' | 'sourceId' | 'catalogId'>,
     ): Promise<R> => unavailable(),
     checkMacOSPermission: async (): Promise<ReturnType<typeof systemPreferences.getMediaAccessStatus>> => 'denied',
     requestMacOSPermission: async () => {},

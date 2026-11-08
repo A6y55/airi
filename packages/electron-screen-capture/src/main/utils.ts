@@ -16,10 +16,12 @@ import { isMacOS } from 'std-env'
  * - {@link https://github.com/electron/electron/issues/34905}
  *
  * @param source - The DesktopCapturerSource to serialize
+ * @param catalogId - The window's current source catalog identifier
  * @returns A serializable representation of the DesktopCapturerSource
  */
-export function toSerializableDesktopCapturerSource(source: DesktopCapturerSource): SerializableDesktopCapturerSource {
+export function toSerializableDesktopCapturerSource(source: DesktopCapturerSource, catalogId: string): SerializableDesktopCapturerSource {
   return {
+    catalogId,
     id: source.id,
     name: source.name,
     display_id: source.display_id,

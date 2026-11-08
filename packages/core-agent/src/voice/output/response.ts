@@ -395,7 +395,8 @@ export class VoiceResponse {
   readonly turn: TurnRef
 
   constructor(turn: TurnRef, private readonly output: SpeechOutput, private readonly onClosed: () => void) {
-    this.turn = Object.freeze({ ...turn })
+    // Callers also pass chat contexts. Playback must not retain their messages or media.
+    this.turn = Object.freeze({ sessionId: turn.sessionId, turnId: turn.turnId })
     this.playback = output.playback.openGroup(`${turn.sessionId}:${turn.turnId}`)
   }
 

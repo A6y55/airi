@@ -1,0 +1,33 @@
+title: Local companion
+description: MiniMax conversation and SAG2 memory
+keys: API connections
+provider-note: Chat and voice use your configured MiniMax provider. Memory uses OpenCode Jev 1.13 Free without an API key.
+save: Save settings
+saved: Settings saved
+test-jev: Test Jev
+connected: Connection verified
+memory: Long-term memory
+memory-enabled: Archive conversations and recall related memories
+memory-description: Each character has a separate local archive. Idle time makes no memory requests.
+sag-path: SAG executable
+sag-version: 'SAG version: {version}'
+archive-path: 'Archive: {path}'
+reload: Refresh memories
+empty: No memories for this character yet.
+edit: Edit selected memory
+save-memory: Save memory
+delete-memory: Delete memory
+export: Export this character’s memories
+exported: 'Exported to {path}'
+clear: Clear memories and start a new conversation
+confirm-clear: Delete this character’s long-term memories and start a new conversation. Keep old chats archived, outside the new context. Preserve character settings.
+cleared: Memories cleared. A new conversation started. Character and application settings remain unchanged.
+query: Search this character’s memories
+search: Search
+sources: '{count} source files'
+no-results: No related memory found.
+recall-failed: Memory lookup failed. The current conversation can continue.
+archive-failed: Memory needs attention. Open Local companion settings.
+privacy: Microphone, screen observation, and desktop control start disabled.
+credentials-save-failed: Provider settings could not be saved securely. Keep AIRI open and unlock your system keyring.
+credentials-load-failed: Provider settings could not be loaded securely. Unlock your system keyring and restart AIRI.

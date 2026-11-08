@@ -832,6 +832,7 @@ pages:
             thinking:
               label: Thinking
               required-description: This model requires Thinking.
+              minimax-flash-description: MiniMax-M3.1-Flash always thinks. Off selects low effort for faster replies. On selects maximum effort.
               provider-default-description: AIRI has no reasoning settings for this model. OpenRouter applies its default.
       title: Consciousness
     description: Thinking, vision, speech synthesis, gaming, etc.
@@ -915,7 +916,7 @@ pages:
         download: The first enrollment downloads the voiceprint model, about 28 MB.
         speaker-recognition:
           label: Speaker recognition
-          description: Compares each voice input that speech or a wake word starts with your voiceprint, and records the score in the IO trace of the input. Push to Talk inputs get no score. Every voice can still start an input, and the chat model does not receive the score. While AIRI listens, the voiceprint model stays in memory.
+          description: Filters transcription and voice messages by your voiceprint. Automatic interruptions check half-second voice windows, even with this switch off. Missing voiceprints and model failures block automatic interruptions. Similar voices or simultaneous speech can cause recognition errors. Stop and Push to Talk remain manual controls.
           needs-voiceprint: Enroll your voice to turn on speaker recognition.
         status:
           none: You have no voiceprint.

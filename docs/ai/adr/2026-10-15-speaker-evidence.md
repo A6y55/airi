@@ -1,12 +1,13 @@
-# Speaker evidence in shadow mode
+# Speaker recognition and evidence
 
 Status: accepted
 
 ## Context
 
-The speaker gates will start a voice input only for the enrolled owner. A gate needs a threshold that separates the owner from other people and from the echo of the character.
+Speaker recognition must filter speech before it reaches transcription or a voice attachment. Evidence in a submitted transcript arrives too late.
 
-Sherpaw tuned its focus threshold, a cosine of 0.35 for each 0.25 s step, on unprocessed audio. AIRI records with echo cancellation, noise suppression, and automatic gain, so its scores can differ. AIRI needs its own score distributions before a gate uses a threshold.
+Sherpaw uses a cosine threshold of 0.35 with one-second windows. AIRI reuses this model and threshold for its audio filter.
+The threshold has not been calibrated for the user's microphone, echo cancellation, noise suppression, or automatic gain.
 
 `@proj-airi/core-agent` already carries speaker evidence. `updateSpeakerEvidence` accepts evidence for audio inside an input until its transcription ends, and the submission carries the newest evidence. Before this change, no code wrote evidence.
 
@@ -16,7 +17,25 @@ Sherpaw tuned its focus threshold, a cosine of 0.35 for each 0.25 s step, on unp
 
 The Voiceprint settings page has a Speaker recognition switch. It is off by default, and it is available only with a usable voiceprint.
 
-While the voice host listens with the switch on, the speaker tracker Worker stays loaded with the voiceprint. The host releases the Worker when listening stops, the switch turns off, or the voiceprint is deleted.
+Continuous listening and captured recordings retain the shared tracker Worker. The last release terminates it.
+
+### Audio filtering
+
+`prepareOwnerSpeech` compares one-second windows before transcription or voice message encoding. Recording completion also checks its final partial window.
+Before the first matching window, rejected audio stays local. After a match, rejected windows become silence with the same duration.
+The transcription provider opens only after a match. An unmatched input is cancelled without a chat draft.
+Automatic input and wake words check half-second owner voice windows before interrupting an existing response.
+The rule applies even when ordinary Speaker recognition is off. Missing voiceprints or failed comparisons prevent automatic interruption.
+Successful admission preserves the matching audio for transcription and does not wait for input completion.
+CAM++ requires at least 250 ms. A shorter final tail borrows preceding samples for comparison, while its output keeps only the original tail.
+A short utterance without enough preceding audio cannot establish speaker identity and is rejected without a model request.
+The host pins interruption targets when capture starts. A new response invalidates a delayed match.
+External wake adapters cannot bypass this check. Manual controls still explicitly interrupt playback.
+Voice messages filter before the stream splits into transcription and WAV encoding. An unmatched recording creates no attachment.
+Missing or changed voiceprints, model errors, and non-finite scores never release unchecked audio.
+Changing the switch cancels active recordings. A deleted voiceprint does not silently disable filtering.
+
+The microphone captures local audio for comparison. This filter does not separate simultaneous speakers or guarantee recognition of every voice.
 
 ### Comparison
 
@@ -51,22 +70,28 @@ The `Voice input` span records the newest evidence that the plugin computed, eve
 
 ### Failures
 
-A failed comparison reports the error and releases the Worker. A broken Worker therefore does not fail every window. The next change of the switch or the voiceprint loads the Worker again.
-
-A release ends the comparisons that still run, for example when listening stops or the switch turns off. They have no score and report no error. After a voiceprint change, a comparison waits until the tracker has enrolled the new voiceprint, because the tracker has no speakers between `reset` and `enrollVoiceprint`.
+A failed comparison stops its filtered stream without exposing unchecked samples. The existing evidence observer also reports comparison failures.
+Cancellation releases the recording's tracker reference. A comparison that completes after cancellation cannot publish its audio.
+Each filter keeps its enrolled voiceprint identity. A changed or deleted voiceprint invalidates the active filter.
 
 ## Consequences
 
-- Speaker evidence only measures. It does not begin, end, or cancel an input, and the model receives nothing new.
-- Manual inputs, for example Push to Talk, get no evidence. The voice activity plugin does not follow them, so no comparison has VAD results.
-- Evidence that arrives after the transcription ends is rejected. The rejected count shows how often the submitted evidence was older than the newest one. It decides whether core-agent keeps speaker evidence writable until submission.
-- The scores come from the processed speech input, the same input as the enrollment.
-- While the host listens with the switch on, the Worker keeps the CAM++ model in memory. The model pack is about 28 MB. Each second of input runs 4 comparisons. Neither the memory nor the CPU use is measured.
-- To collect score distributions, turn on Speaker recognition and IO trace recording on desktop, and use voice input for several days. Inputs of the owner, of other people, and of the character's echo then give the scores for the gate threshold.
+- The evidence plugin remains an observer. The separate PCM filter decides what reaches a provider.
+- The filter covers automatic input, wake words, dictation, Push to Talk, and voice messages.
+- Manual input still has no VAD-based evidence, but its captured audio passes through the same filter.
+- Scores come from the processed microphone input, as does enrollment.
+- Ordinary classification uses one-second windows. Automatic interruption uses half-second windows plus model execution time.
+- Short final tails use preceding audio to satisfy the model's minimum window. Output contains each accepted sample once.
+- Similar voices, microphone changes, short utterances, and overlapping speech can cause classification errors.
 
 ## Verification
 
-Unit tests run the voice activity plugin and the speaker evidence plugin on one controller with a fake comparison. They cover the counted comparisons, the speech share rule, windows without an embedding, the evidence in the submission, and the switch.
-Other tests cover the trace attributes, the prompt without speaker evidence, the comparison and the clamping of the tracker store, and the Voiceprint page switch.
-The voice store wiring has no test, because no test mounts `useVoiceStore`.
-A real microphone with the CAM++ model is not tested.
+Tests cover accepted speech, rejected speakers, non-finite scores, model errors, cancellation, and final partial windows.
+Provider-boundary tests confirm that rejected speech starts no transcription request. Voice message tests check the filtered attachment and transcript.
+Settings tests cover deletion while filtering remains on and explicit recovery through the switch.
+Host tests keep a real playback group active through external wake detection, rejected voice windows, missing voiceprints, and delayed matches.
+They confirm that a half-second owner match stops playback, including when ordinary Speaker recognition is off.
+A smoke run used the real CAM++ Worker with the existing Samantha and alloy fixtures.
+With Samantha enrolled, owner scores were 0.873–0.912 and alloy scores were −0.033–0.081. All alloy audio was rejected.
+A separate half-second smoke check scored the enrolled fixture at 0.819 and the other fixture at 0.051, accepting only the enrolled voice.
+These fixtures do not establish accuracy for the user's voice, microphone, or room.

@@ -15,7 +15,7 @@ import type { Live2DExpressionControl } from '../../../controls/manifest'
 import { listenBeatSyncBeatSignal } from '@proj-airi/stage-shared/beat-sync'
 import { ambientLightDefaults, ambientLightNeutralEnvironment, ambientLightPerceptualLevel, wholeWindowRectangle } from '@proj-airi/stage-shared/screen-ambient-light'
 import { useTheme } from '@proj-airi/ui'
-import { until } from '@vueuse/core'
+import { until, useEventListener } from '@vueuse/core'
 import { animate } from 'animejs'
 import { formatHex } from 'culori'
 import { Mutex } from 'es-toolkit'
@@ -134,6 +134,29 @@ const pixiApp = toRef(() => props.app)
 const paused = toRef(() => props.paused)
 const focusAt = toRef(() => props.focusAt)
 const model = shallowRef<Live2DModel<PixiLive2DInternalModel>>()
+let pressedPointer: { id: number, x: number, y: number } | undefined
+// Focus is controlled by AIRI, so the SDK's disabled auto-interaction needs an explicit tap path.
+useEventListener(() => pixiApp.value?.view, 'pointerdown', (event: PointerEvent) => {
+  if (event.button === 0 && event.isPrimary)
+    pressedPointer = { id: event.pointerId, x: event.clientX, y: event.clientY }
+})
+useEventListener(() => pixiApp.value?.view, 'pointerup', (event: PointerEvent) => {
+  const pressed = pressedPointer
+  pressedPointer = undefined
+  const canvas = pixiApp.value?.view
+  if (!pressed || pressed.id !== event.pointerId || !canvas || !model.value || props.paused)
+    return
+  if (Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > 6)
+    return
+  const rect = canvas.getBoundingClientRect()
+  if (!rect.width || !rect.height)
+    return
+  // The stage scales in backing pixels, while pointer coordinates are CSS pixels.
+  model.value.tap((event.clientX - rect.left) * canvas.width / rect.width, (event.clientY - rect.top) * canvas.height / rect.height)
+})
+useEventListener(() => pixiApp.value?.view, 'pointercancel', () => {
+  pressedPointer = undefined
+})
 const initialModelWidth = ref<number>(0)
 const initialModelHeight = ref<number>(0)
 const mouthOpenSize = computed(() => Math.max(0, Math.min(100, props.mouthOpenSize)))
@@ -377,9 +400,14 @@ async function performModelLoad() {
 
     // --- Interaction
 
-    model.value.on('hit', (hitAreas) => {
-      if (model.value && hitAreas.includes('body'))
-        model.value.motion('tap_body')
+    model.value.on('hit', (hitAreas: string[]) => {
+      if (!model.value || !hitAreas.length)
+        return
+      const groups = Object.keys(model.value.internalModel.motionManager.definitions)
+      const group = groups.find(name => hitAreas.some(area => name.toLowerCase().replace(/[_@-]/g, '') === `tap${area.toLowerCase()}`))
+        ?? groups.find(name => name.toLowerCase() === 'tap')
+      if (group)
+        void setMotion(group)
     })
 
     // --- Motion

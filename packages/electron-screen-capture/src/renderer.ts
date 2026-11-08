@@ -9,7 +9,7 @@ import { screenCaptureCheckMacOSPermission, screenCaptureGetSources, screenCaptu
 
 export interface SourceOptionsWithRequest {
   sourcesOptions: SourcesOptions
-  request?: Omit<ScreenCaptureSetSourceRequest, 'options' | 'sourceId'>
+  request?: Omit<ScreenCaptureSetSourceRequest, 'options' | 'sourceId' | 'catalogId'>
 }
 
 export function setupElectronScreenCapture(context: ReturnType<typeof createContext>['context']) {
@@ -31,12 +31,16 @@ export function setupElectronScreenCapture(context: ReturnType<typeof createCont
   ): Promise<R> {
     const sources = await getSources(options.sourcesOptions)
     const sourceId = await selectFn(sources)
+    const source = sources.find(source => source.id === sourceId)
+    if (!source)
+      throw new Error('The selected screen source is not in this catalog')
 
     let handle: string | undefined
     try {
       handle = await setSource({
         options: options.sourcesOptions,
         sourceId,
+        catalogId: source.catalogId,
         timeout: options.request?.timeout,
       })
       return await useFn()

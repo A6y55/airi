@@ -4,7 +4,7 @@ import type { MaybeRefOrGetter } from 'vue'
 
 import { useElectronScreenCapture } from '@proj-airi/electron-screen-capture/vue'
 import { getElectronEventaContext } from '@proj-airi/electron-vueuse'
-import { computed, ref, shallowRef, watch } from 'vue'
+import { computed, onScopeDispose, ref, shallowRef, toRaw, toValue, watch } from 'vue'
 
 import { createObjectUrlFromBytes } from '../utils/create-object-url-from-bytes'
 
@@ -14,18 +14,8 @@ interface ScreenCaptureSource extends SerializableDesktopCapturerSource {
 }
 
 /**
- * Manages Electron-backed screen-capture sources and the active preview stream for vision workflows.
- *
- * Use when:
- * - A renderer page needs to browse screen/window sources before capturing frames
- * - The page should keep a single active `MediaStream` in sync with the selected source
- *
- * Expects:
- * - The Electron screen-capture preload APIs to be available on `window.electron.ipcRenderer`
- * - Callers to invoke `cleanup()` when the owning component unmounts
- *
- * Returns:
- * - Reactive source lists, active stream state, and helpers for refetching, starting, stopping, and capturing frames
+ * Owns source previews and one screen-capture request for the current Vue scope.
+ * Stop, source changes, and scope disposal cancel callers immediately and close late streams.
  */
 export function useVisionScreenCapture(sourcesOptions: MaybeRefOrGetter<SourcesOptions>) {
   const sources = ref<ScreenCaptureSource[]>([])
@@ -35,15 +25,19 @@ export function useVisionScreenCapture(sourcesOptions: MaybeRefOrGetter<SourcesO
   const activeStream = shallowRef<MediaStream | null>(null)
   const activeStreamSourceId = ref('')
 
-  watch(activeSourceId, (nextId) => {
-    if (activeStreamSourceId.value && activeStreamSourceId.value !== nextId) {
-      clearActiveStream()
-    }
-  })
+  let disposed = false
+  let pendingStart: Promise<MediaStream> | undefined
+  let startController: AbortController | undefined
+  let releasePendingSource: (() => Promise<void>) | undefined
+  let detachStreamLifecycle: (() => void) | undefined
+  let cancelPreview: (() => void) | undefined
+
+  watch(activeSourceId, stopStream, { flush: 'sync' })
 
   const {
     getSources,
-    selectWithSource,
+    setSource,
+    resetSource,
   } = useElectronScreenCapture(getElectronEventaContext(), sourcesOptions)
 
   const activeSource = computed(() => sources.value.find(source => source.id === activeSourceId.value) || null)
@@ -56,16 +50,13 @@ export function useVisionScreenCapture(sourcesOptions: MaybeRefOrGetter<SourcesO
   }
 
   function clearActiveStream() {
+    cancelPreview?.()
+    detachStreamLifecycle?.()
+    detachStreamLifecycle = undefined
     const stream = activeStream.value
-    if (!stream) {
-      activeStream.value = null
-      activeStreamSourceId.value = ''
-      return
-    }
-
-    stream.getTracks().forEach(track => track.stop())
     activeStream.value = null
     activeStreamSourceId.value = ''
+    stream?.getTracks().forEach(track => track.stop())
   }
 
   function revokeSourceObjectUrls(entries: ScreenCaptureSource[]) {
@@ -77,17 +68,21 @@ export function useVisionScreenCapture(sourcesOptions: MaybeRefOrGetter<SourcesO
     })
   }
 
-  function attachStreamLifecycle(stream: MediaStream, sourceId: string) {
-    stream.getTracks().forEach((track) => {
-      track.addEventListener('ended', () => {
-        if (activeStream.value === stream && activeStreamSourceId.value === sourceId) {
-          activeStream.value = null
-          activeStreamSourceId.value = ''
-        }
-      }, { once: true })
-    })
+  function attachStreamLifecycle(stream: MediaStream) {
+    const tracks = stream.getVideoTracks()
+    const onEnded = () => {
+      if (activeStream.value === stream)
+        clearActiveStream()
+    }
+    tracks.forEach(track => track.addEventListener('ended', onEnded))
+    stream.addEventListener('inactive', onEnded)
+    detachStreamLifecycle = () => {
+      tracks.forEach(track => track.removeEventListener('ended', onEnded))
+      stream.removeEventListener('inactive', onEnded)
+    }
   }
 
+  /** Returns the current native-picker selection, if this request completed one instead of listing available sources. */
   async function refetchSources() {
     try {
       isRefetching.value = true
@@ -99,6 +94,8 @@ export function useVisionScreenCapture(sourcesOptions: MaybeRefOrGetter<SourcesO
             return aIsScreen ? -1 : 1
           return a.name.localeCompare(b.name)
         })
+      if (disposed)
+        return
 
       revokeSourceObjectUrls(sources.value)
 
@@ -109,8 +106,16 @@ export function useVisionScreenCapture(sourcesOptions: MaybeRefOrGetter<SourcesO
       }))
 
       const hasActiveSource = sources.value.some(source => source.id === activeSourceId.value)
-      const nextActiveSourceId = hasActiveSource ? activeSourceId.value : sources.value[0]?.id || ''
-      activeSourceId.value = nextActiveSourceId
+      // A catalog lists possible sources. It does not authorize its first entry, including a new catalog after restart.
+      if (!hasActiveSource)
+        activeSourceId.value = ''
+
+      // Chromium marks native-picker sessions with :s. Electron resolves delegated catalogs only after the user selects a source.
+      // https://github.com/chromium/chromium/blob/150.0.7871.250/content/public/browser/desktop_media_id.cc
+      // https://github.com/electron/electron/blob/v43.8.4/shell/browser/api/electron_api_desktop_capturer.cc
+      const selectedSource = sources.value.length === 1 ? sources.value[0] : undefined
+      if (selectedSource && /^(?:screen|window):-?\d+:-?\d+:s$/.test(selectedSource.id))
+        return selectedSource
     }
     finally {
       isRefetching.value = false
@@ -118,39 +123,168 @@ export function useVisionScreenCapture(sourcesOptions: MaybeRefOrGetter<SourcesO
     }
   }
 
-  async function startStream() {
-    const sourceId = activeSourceId.value
-    if (!sourceId)
-      throw new Error('No active source selected')
+  function startStream(): Promise<MediaStream> {
+    if (disposed)
+      return Promise.reject(new DOMException('Screen capture window closed', 'AbortError'))
 
-    if (isActiveStream(activeStream.value) && activeStreamSourceId.value === sourceId)
-      return activeStream.value!
-
-    clearActiveStream()
-
-    const stream = await selectWithSource(
-      () => sourceId,
-      async () => await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }),
-    )
-    if (!isActiveStream(stream)) {
-      stream.getTracks().forEach(track => track.stop())
-      throw new Error('Selected source did not provide a live video track')
+    if (pendingStart) {
+      if (startController?.signal.aborted)
+        return Promise.reject(new Error('The previous capture request is closing. Close the system sharing dialog and try again.'))
+      return pendingStart
     }
 
-    activeStream.value = stream
-    activeStreamSourceId.value = sourceId
-    attachStreamLifecycle(stream, sourceId)
+    const source = activeSource.value
+    if (!source)
+      return Promise.reject(new Error('No active source selected'))
 
-    return stream
+    if (isActiveStream(activeStream.value) && activeStreamSourceId.value === source.id)
+      return Promise.resolve(activeStream.value!)
+
+    clearActiveStream()
+    const controller = new AbortController()
+    startController = controller
+    const { signal } = controller
+    const cancelled = Promise.withResolvers<never>()
+    const rejectAbort = () => cancelled.reject(signal.reason)
+    signal.addEventListener('abort', rejectAbort, { once: true })
+
+    // Cancellation settles the caller now. The native request owns its slot until it returns and releases its selection.
+    const request = Promise.resolve().then(async () => {
+      let stream: MediaStream | undefined
+      try {
+        signal.throwIfAborted()
+        const handle = await setSource({
+          sourceId: source.id,
+          catalogId: source.catalogId,
+          options: toRaw(toValue(sourcesOptions)),
+        })
+        let released: Promise<void> | undefined
+        const release = () => released ??= resetSource(handle)
+        releasePendingSource = release
+        try {
+          signal.throwIfAborted()
+          stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+        }
+        finally {
+          await release()
+        }
+
+        signal.throwIfAborted()
+        if (!isActiveStream(stream))
+          throw new Error('Selected source did not provide a live video track')
+
+        activeStream.value = stream
+        activeStreamSourceId.value = source.id
+        attachStreamLifecycle(stream)
+        return stream
+      }
+      catch (error) {
+        stream?.getTracks().forEach(track => track.stop())
+        throw error
+      }
+      finally {
+        releasePendingSource = undefined
+        pendingStart = undefined
+        startController = undefined
+      }
+    })
+
+    pendingStart = Promise.race([request, cancelled.promise]).finally(() => {
+      signal.removeEventListener('abort', rejectAbort)
+    })
+    return pendingStart
   }
 
   function stopStream() {
+    startController?.abort()
+    void releasePendingSource?.().catch(error => console.error('Failed to release screen capture selection', error))
     clearActiveStream()
   }
 
   function cleanup() {
+    disposed = true
     stopStream()
     revokeSourceObjectUrls(sources.value)
+    sources.value = []
+  }
+
+  onScopeDispose(cleanup)
+
+  /** Plays the active stream and waits for a decoded frame, including one that arrived before this call. */
+  function playStream(video: HTMLVideoElement, signal: AbortSignal) {
+    cancelPreview?.()
+    const selectedStream = activeStream.value
+    if (!selectedStream || !isActiveStream(selectedStream))
+      return Promise.reject(new Error('Screen sharing ended before the first video frame'))
+    const stream = selectedStream
+
+    const ready = Promise.withResolvers<void>()
+    let settled = false
+    let playing = false
+    const tracks = stream.getVideoTracks()
+    const timeout = setTimeout(() => {
+      finish(new Error('No video frame arrived within 15 seconds. Check the system sharing dialog and capture permissions.'))
+    }, 15_000)
+
+    function finish(error?: unknown) {
+      if (settled)
+        return
+      settled = true
+      cancelPreview = undefined
+      clearTimeout(timeout)
+      signal.removeEventListener('abort', onAbort)
+      video.removeEventListener('loadeddata', onFrame)
+      video.removeEventListener('canplay', onFrame)
+      video.removeEventListener('error', onError)
+      video.removeEventListener('emptied', onReplaced)
+      stream.removeEventListener('inactive', onEnded)
+      tracks.forEach(track => track.removeEventListener('ended', onEnded))
+      if (error)
+        ready.reject(error)
+      else
+        ready.resolve()
+    }
+
+    function onFrame() {
+      if (playing && video.srcObject === stream && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0)
+        finish()
+    }
+    function onAbort() {
+      finish(signal.reason)
+    }
+    function onError() {
+      finish(new Error(video.error?.message ?? 'Failed to play the screen capture preview'))
+    }
+    function onEnded() {
+      finish(new Error('Screen sharing ended before the first video frame'))
+    }
+    function onReplaced() {
+      if (video.srcObject !== stream)
+        onEnded()
+    }
+
+    cancelPreview = () => finish(new DOMException('Screen capture stopped', 'AbortError'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    video.addEventListener('loadeddata', onFrame)
+    video.addEventListener('canplay', onFrame)
+    video.addEventListener('error', onError)
+    tracks.forEach(track => track.addEventListener('ended', onEnded))
+    stream.addEventListener('inactive', onEnded)
+    if (signal.aborted) {
+      onAbort()
+      return ready.promise
+    }
+
+    video.muted = true
+    video.playsInline = true
+    if (video.srcObject !== stream)
+      video.srcObject = stream
+    video.addEventListener('emptied', onReplaced)
+    void video.play().then(() => {
+      playing = true
+      onFrame()
+    }, finish)
+    return ready.promise
   }
 
   function captureFrame(video: HTMLVideoElement, quality = 0.82, maxWidth = 1280, maxHeight = 720) {
@@ -184,6 +318,7 @@ export function useVisionScreenCapture(sourcesOptions: MaybeRefOrGetter<SourcesO
     hasFetchedOnce,
     refetchSources,
     startStream,
+    playStream,
     stopStream,
     cleanup,
     captureFrame,

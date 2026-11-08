@@ -570,8 +570,8 @@
 - id: speaker-recognition
   subject: sound
   translatable: true
-  definition: A setting that compares each voice input with the saved voiceprint and records how similar they are.
-  note: Speaker means the person who speaks, not a loudspeaker. The setting does not block other voices.
+  definition: A setting that uses the saved voiceprint to filter microphone speech before transcription and voice message recording.
+  note: Speaker means the person who speaks, not a loudspeaker. Similar voices and overlapping speech can cause recognition errors.
   terms:
     - text: Speaker recognition
       part-of-speech: noun

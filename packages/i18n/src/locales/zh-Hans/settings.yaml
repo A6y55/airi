@@ -787,6 +787,7 @@ pages:
             thinking:
               label: 思考
               required-description: 此模型必须启用思考。
+              minimax-flash-description: MiniMax-M3.1-Flash 无法完全关闭思考。关闭此开关使用低思考强度以加快回复，开启则使用最高强度。
               provider-default-description: AIRI 未提供此模型的推理设置，将使用 OpenRouter 的默认设置。
       title: 意识
     description: 思维，视觉，言语综合，游戏等
@@ -866,7 +867,7 @@ pages:
         download: 第一次登记时会下载声纹模型，约 28 MB。
         speaker-recognition:
           label: 说话人识别
-          description: 把由说话或唤醒词开始的每次语音输入和你的声纹比对，并把分数记录在这次输入的 IO trace 中。「按住说话」的输入没有分数。任何人的声音仍然可以开始输入，聊天模型也收不到这个分数。AIRI 聆听期间，声纹模型会一直留在内存中。
+          description: 按声纹过滤转写和语音消息。自动打断按约半秒窗口检查你的声纹，关闭此开关也不会绕过检查。未登记声纹或模型失败时禁止自动打断。相似音色或多人同时说话仍可能误判。停止按钮和按住说话仍是手动控制。
           needs-voiceprint: 登记声纹后才能开启说话人识别。
         status:
           none: 你还没有声纹。

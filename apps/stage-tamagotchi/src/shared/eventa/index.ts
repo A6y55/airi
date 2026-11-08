@@ -663,6 +663,8 @@ export const electronAppQuit = defineInvokeEventa<void>('eventa:invoke:electron:
 export const electronAppGetVersion = defineInvokeEventa<string>('eventa:invoke:electron:app:get-version')
 /** Whether the app runs on the Wayland Ozone backend, where Electron cannot read the cursor position reliably. */
 export const electronAppIsWayland = defineInvokeEventa<boolean>('eventa:invoke:electron:app:is-wayland')
+/** Whether global pointer coordinates can restore input after the stage becomes click-through. */
+export const electronAppSupportsGlobalCursorPosition = defineInvokeEventa<boolean>('eventa:invoke:electron:app:supports-global-cursor-position')
 /**
  * The main window mounted its page. The update launcher keeps a new bundle only when it reports healthy, so the page
  * calls it once it mounts, also after a page-only update reloaded it.

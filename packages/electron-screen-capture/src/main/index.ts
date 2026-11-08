@@ -3,13 +3,13 @@
 
 import type { Format, LogLevelString } from '@guiiai/logg'
 import type { MutexInterface } from 'async-mutex'
-import type { BrowserWindow, DesktopCapturerSource, SourcesOptions } from 'electron'
+import type { BrowserWindow, DesktopCapturerSource, Session, SourcesOptions, Streams } from 'electron'
 
 import { useLogg } from '@guiiai/logg'
 import { defineInvokeHandler } from '@moeru/eventa'
 import { createContext } from '@moeru/eventa/adapters/electron/main'
 import { Mutex, withTimeout } from 'async-mutex'
-import { app, desktopCapturer, ipcMain, session as sessionModule } from 'electron'
+import { app, desktopCapturer, ipcMain } from 'electron'
 import { nanoid } from 'nanoid'
 
 import { screenCapture } from '..'
@@ -91,9 +91,19 @@ export interface GetLoopbackAudioMediaStreamOptions {
   removeVideo?: boolean
 }
 
+interface CaptureSelection {
+  handle: string
+  windowId: number
+  session: Session
+  release: MutexInterface.Releaser
+  timeout?: NodeJS.Timeout
+  started: boolean
+}
+
+// A selection owns the session handler until reset or owner disposal. Only an unused selection expires.
+// The window catalog ID rejects stale selections. The handle and frame bind one media request to its owner.
 let setSourceMutex: MutexInterface
-let screenCaptureSourceMutexHandle: string | undefined
-let setSourceMutexTimeoutHandle: NodeJS.Timeout | undefined
+let activeSelection: CaptureSelection | undefined
 
 export function initScreenCaptureForMain(options: InitMainOptions = {}): void {
   const {
@@ -137,11 +147,21 @@ export function initScreenCaptureForMain(options: InitMainOptions = {}): void {
   app.commandLine.appendSwitch(featureSwitchKey, currentFeatureFlags)
 }
 
-function resetScreenCaptureSource() {
-  sessionModule.defaultSession.setDisplayMediaRequestHandler(null)
-  clearTimeout(setSourceMutexTimeoutHandle)
-  setSourceMutexTimeoutHandle = undefined
-  screenCaptureSourceMutexHandle = undefined
+function releaseSelection(selection: CaptureSelection) {
+  if (activeSelection !== selection)
+    return
+
+  activeSelection = undefined
+  clearTimeout(selection.timeout)
+  try {
+    selection.session.setDisplayMediaRequestHandler(null)
+  }
+  catch (error) {
+    useLogg('screen-capture').withError(error).error('Failed to reset the display media handler')
+  }
+  finally {
+    selection.release()
+  }
 }
 
 /**
@@ -157,7 +177,7 @@ function resetScreenCaptureSource() {
  * - Whether `setDisplayMediaRequestHandler` is currently bound to a source picked by a renderer
  */
 export function hasSelectedScreenCaptureSource(): boolean {
-  return screenCaptureSourceMutexHandle !== undefined
+  return activeSelection !== undefined
 }
 
 const initializedWindows = new WeakSet<BrowserWindow>()
@@ -200,90 +220,166 @@ export function initScreenCaptureForWindow(window: BrowserWindow, options?: Init
 
   initializedWindows.add(window)
 
-  const { context } = createContext(ipcMain, window, { onlySameWindow: true })
-  const session = sessionModule.defaultSession
+  const { context, dispose } = createContext(ipcMain, window, { onlySameWindow: true })
+  const webContents = window.webContents
+  const session = webContents.session
+  const catalog = new Map<string, DesktopCapturerSource>()
+  let catalogId: string | undefined
+  let generation = 0
+
+  function isWindowAvailable() {
+    return !window.isDestroyed() && !webContents.isDestroyed() && !webContents.isCrashed()
+  }
+
+  function invalidateWindow() {
+    generation++
+    catalogId = undefined
+    catalog.clear()
+    if (activeSelection?.windowId === windowId)
+      releaseSelection(activeSelection)
+  }
+
+  webContents.on('did-start-navigation', (event) => {
+    if (event.isMainFrame && !event.isSameDocument)
+      invalidateWindow()
+  })
+  webContents.on('render-process-gone', invalidateWindow)
+  webContents.once('destroyed', () => {
+    invalidateWindow()
+    dispose()
+  })
+  window.once('closed', invalidateWindow)
 
   defineInvokeHandler(context, screenCapture.checkMacOSPermission, async () => checkMacOSScreenCapturePermission())
   defineInvokeHandler(context, screenCapture.requestMacOSPermission, async () => requestMacOSScreenCapturePermission())
 
-  defineInvokeHandler(context, screenCapture.getSources, async (sourcesOptions) => {
-    // NOTICE(@nekomeowww): In probability of 9/10, the window thumbnail is purely empty or black, sources printed and
-    // nothing is returned from the desktopCapturer API.
-    // NOTICE(@sumimakito): Not only thumbnail is empty, the appIcon could be empty as well with nothing returned.
-    // REVIEW(@sumimakito): This has nothing to do with out side, probably related to Electron Bug, you can
-    // read more here https://github.com/electron/electron/issues/44504
-    const sources = await desktopCapturer.getSources(sourcesOptions)
-    return sources.map(source => toSerializableDesktopCapturerSource(source))
+  defineInvokeHandler(context, screenCapture.getSources, async (sourcesOptions, eventaOptions) => {
+    const sender = eventaOptions?.raw.ipcMainEvent
+    if (!isWindowAvailable() || sender?.sender !== webContents || sender.senderFrame !== webContents.mainFrame)
+      throw new Error('Screen sources require the current window main frame')
+
+    const frame = webContents.mainFrame
+    const requestedCatalogId = nanoid()
+    catalogId = requestedCatalogId
+    catalog.clear()
+
+    try {
+      // PipeWire opens its system picker here. Keep this native snapshot for the later media request.
+      // Electron accepts its source ID and name without another enumeration: docs/api/session.md.
+      const sources = await desktopCapturer.getSources(sourcesOptions)
+      if (!isWindowAvailable() || webContents.mainFrame !== frame || catalogId !== requestedCatalogId)
+        throw new Error('The screen source selection is no longer current')
+
+      const result = sources.map(source => toSerializableDesktopCapturerSource(source, requestedCatalogId))
+      for (const source of sources)
+        catalog.set(source.id, source)
+      return result
+    }
+    catch (error) {
+      if (catalogId === requestedCatalogId) {
+        catalogId = undefined
+        catalog.clear()
+      }
+      throw error
+    }
   })
 
   defineInvokeHandler(context, screenCapture.setSource, async (request, eventaOptions) => {
-    // FIXME: Would be better if `onlySameWindow` in `createContext` also filters out invocations here.
-    if (window.webContents.id !== eventaOptions?.raw.ipcMainEvent.sender.id)
-      return
+    const sender = eventaOptions?.raw.ipcMainEvent
+    if (!isWindowAvailable() || sender?.sender !== webContents || sender.senderFrame !== webContents.mainFrame)
+      throw new Error('Screen capture requires the current window main frame')
 
     const { timeout } = request
-    if (typeof timeout === 'number' && (timeout <= 0 || !Number.isFinite(timeout) || Number.isNaN(timeout))) {
+    if (typeof timeout === 'number' && (timeout <= 0 || !Number.isFinite(timeout)))
       throw new Error('timeout must be a positive finite number')
+
+    const frame = webContents.mainFrame
+    const requestGeneration = generation
+    const source = catalog.get(request.sourceId)
+    if (!source || request.catalogId !== catalogId)
+      throw new Error('The selected screen source is not in the current window catalog')
+
+    const release = await setSourceMutex.acquire()
+    if (!isWindowAvailable() || generation !== requestGeneration || webContents.mainFrame !== frame || request.catalogId !== catalogId) {
+      release()
+      throw new Error('The screen source selection is no longer current')
     }
 
-    await setSourceMutex.acquire()
-    log.withFields({ windowId, windowTitle: tryWindowTitle(window, windowTitle) }).debug('setSourceMutex acquired')
-
-    clearTimeout(setSourceMutexTimeoutHandle)
-    const handle = nanoid()
-    setSourceMutexTimeoutHandle = undefined
-    screenCaptureSourceMutexHandle = handle
+    const selection: CaptureSelection = { handle: nanoid(), windowId, session, release, started: false }
+    activeSelection = selection
 
     try {
-      session.setDisplayMediaRequestHandler(async (_request, callback) => {
-        const sources = await desktopCapturer.getSources(request.options)
-        const source = sources.find(source => source.id === request.sourceId)
-        if (!source) {
-          throw new Error(`Source with id ${request.sourceId} not found.`)
+      session.setDisplayMediaRequestHandler((mediaRequest, callback) => {
+        let answered = false
+        let ownsRequest = false
+        function answer(streams: Streams | null) {
+          if (answered)
+            return
+          answered = true
+          // NOTICE:
+          // Electron 43 accepts null to deny a request, but its declaration omits null.
+          // Source: electron v43.8.4 shell/browser/electron_browser_context.cc, DisplayMediaDeviceChosen.
+          // Remove this assertion when Electron's callback declaration includes null.
+          const respond = callback as (streams: Streams | null) => void
+          respond(streams)
         }
 
-        callback({
-          video: source,
-          audio: options?.loopbackWithMute ? LoopbackAudioTypes.LoopbackWithMute : LoopbackAudioTypes.Loopback,
-        })
+        try {
+          if (activeSelection !== selection || selection.started || !isWindowAvailable()
+            || generation !== requestGeneration || mediaRequest.frame !== frame) {
+            answer(null)
+            return
+          }
+          ownsRequest = true
+          if (catalogId !== request.catalogId) {
+            answer(null)
+            releaseSelection(selection)
+            return
+          }
+
+          selection.started = true
+          clearTimeout(selection.timeout)
+          selection.timeout = undefined
+          const streams: Streams = { video: source }
+          if (mediaRequest.audioRequested)
+            streams.audio = options?.loopbackWithMute ? LoopbackAudioTypes.LoopbackWithMute : LoopbackAudioTypes.Loopback
+          answer(streams)
+        }
+        catch (error) {
+          log.withFields({ windowId }).withError(error).error('Display media request failed')
+          try {
+            answer(null)
+          }
+          catch (denialError) {
+            log.withFields({ windowId }).withError(denialError).error('Display media rejection failed')
+          }
+          if (ownsRequest)
+            releaseSelection(selection)
+        }
       })
 
-      setSourceMutexTimeoutHandle = setTimeout(() => {
-        if (screenCaptureSourceMutexHandle !== handle)
+      selection.timeout = setTimeout(() => {
+        if (activeSelection !== selection || selection.started)
           return
-
-        resetScreenCaptureSource()
-        setSourceMutex.release()
-
-        log
-          .withFields({ windowId, windowTitle: tryWindowTitle(window, windowTitle) })
-          .warn(
-            `setSourceMutex released for window due to timeout. `
-            + 'Please make sure to invoke screenCaptureResetSource when getDisplayMedia is completed.',
-          )
+        releaseSelection(selection)
+        log.withFields({ windowId }).warn('Unused screen capture selection expired before getDisplayMedia started')
       }, timeout ?? 5000)
 
-      return handle
+      return selection.handle
     }
-    catch (e) {
-      log
-        .withFields({ windowId, windowTitle: tryWindowTitle(window, windowTitle) })
-        .withError(e)
-        .error('screenCaptureSetSourceEx failed for window')
-
-      resetScreenCaptureSource()
-      setSourceMutex.release()
-      throw e
+    catch (error) {
+      releaseSelection(selection)
+      throw error
     }
   })
 
-  defineInvokeHandler(context, screenCapture.resetSource, async (mutexHandle) => {
-    if (screenCaptureSourceMutexHandle !== mutexHandle)
+  defineInvokeHandler(context, screenCapture.resetSource, async (handle, eventaOptions) => {
+    if (!isWindowAvailable() || eventaOptions?.raw.ipcMainEvent.sender !== webContents
+      || eventaOptions.raw.ipcMainEvent.senderFrame !== webContents.mainFrame) {
       return
-
-    resetScreenCaptureSource()
-    setSourceMutex.release()
-
-    log.withFields({ windowId, windowTitle: tryWindowTitle(window, windowTitle) }).debug('setSourceMutex released by window')
+    }
+    if (activeSelection?.windowId !== windowId || activeSelection.handle !== handle)
+      return
+    releaseSelection(activeSelection)
   })
 }

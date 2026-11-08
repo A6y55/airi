@@ -8,7 +8,7 @@ import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/con
 import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { Alert, FieldCheckbox, FieldRange, SettingsCard } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 
@@ -39,6 +39,14 @@ const {
 
 const { t } = useI18n()
 const { trackModelSwitched, trackProviderClick } = useAnalytics()
+const thinkingDescription = computed(() => {
+  const provider = providersStore.findProviderDefinition(activeProvider.value)?.id
+  if ((provider === 'minimax' || provider === 'minimax-global') && activeModel.value === 'MiniMax-M3.1-Flash')
+    return t('settings.pages.modules.consciousness.sections.section.model-options.thinking.minimax-flash-description')
+  if (activeModelRequiresReasoning.value)
+    return t('settings.pages.modules.consciousness.sections.section.model-options.thinking.required-description')
+  return undefined
+})
 watch(activeProvider, async (provider) => {
   if (!provider)
     return
@@ -314,7 +322,7 @@ async function updateTopPEnabled(value: boolean) {
         v-else
         :model-value="reasoning || activeModelRequiresReasoning"
         :label="t('settings.pages.modules.consciousness.sections.section.model-options.thinking.label')"
-        :description="activeModelRequiresReasoning ? t('settings.pages.modules.consciousness.sections.section.model-options.thinking.required-description') : undefined"
+        :description="thinkingDescription"
         :disabled="activeModelRequiresReasoning"
         @update:model-value="updateReasoning"
       />

@@ -591,6 +591,15 @@ devtools:
       title: Widget Calling
 
 screen-capture:
+  observation:
+    title: Screen observation
+    open: Open screen observation
+    host-description: Observation runs in its own window. Settings navigation does not stop it. Keep this window open or minimized. Closing it stops capture.
+    startup-label: Open screen observation at startup
+    startup-description: Off by default. Opens the source selection flow when Vision is enabled. System permission can be required again.
+    resume-description: Select a source to resume observation with your saved options. The system can request screen permission again. No source is selected automatically.
+    waiting: Waiting for a source
+    disabled: Vision is disabled. Enable it in module settings to observe the screen.
   permissions-prompt:
     title: Screen Capture
     description: To capture screens or windows, screen and system audio recording permissions are required.

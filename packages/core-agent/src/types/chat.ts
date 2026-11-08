@@ -149,6 +149,8 @@ export interface ChatStreamEventContext {
   message: ChatHistoryItem
   contexts: Record<string, ContextMessage[]>
   composedMessage: Array<Message>
+  /** Request-only evidence written by before-compose hooks. It never enters persisted chat history or another turn. */
+  systemPromptSupplement?: string
   input?: WebSocketEventInputs
   /** Whether the reply speaks on the host. Scene replies and background tasks stay silent. */
   speaks?: boolean

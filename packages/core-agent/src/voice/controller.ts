@@ -243,7 +243,8 @@ export class VoiceController {
   interrupt(options: { turns: readonly TurnRef[], cause: string }): Interruption {
     const id = nanoid()
     const fadeMs = this.options.fadeMs ?? 100
-    const unique = new Map(options.turns.map(turn => [turnKey(turn), Object.freeze({ ...turn })]))
+    // Control records leave this runtime, so they carry only the response identity.
+    const unique = new Map(options.turns.map(turn => [turnKey(turn), Object.freeze({ sessionId: turn.sessionId, turnId: turn.turnId })]))
     const targets = [...unique.entries()]
 
     const pending = targets.map(([key, turn]) => {

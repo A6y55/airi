@@ -26,6 +26,8 @@ export interface VisionCapturePayload {
   capturedAt?: number
   /** When `true`, publish the inference result into the character context channel. */
   publishContext?: boolean
+  /** Cancels publication when the capture owner stops or disables observation during inference. */
+  signal?: AbortSignal
 }
 
 function getVisionContextId(payload: Pick<VisionCapturePayload, 'workloadId' | 'sourceId'>) {
@@ -59,6 +61,7 @@ export const useVisionOrchestratorStore = defineStore('vision-orchestrator', () 
   const lastWorkloadId = ref<VisionWorkloadId>('screen:interpret')
 
   async function processCapture(payload: VisionCapturePayload) {
+    payload.signal?.throwIfAborted()
     if (!visionStore.configured) {
       const configurationError = new Error('Vision model is not configured')
       recordError(configurationError)
@@ -71,7 +74,11 @@ export const useVisionOrchestratorStore = defineStore('vision-orchestrator', () 
       const text = await runVisionInference({
         imageDataUrl: payload.imageDataUrl,
         workloadId: payload.workloadId,
+        abortSignal: payload.signal,
       })
+      payload.signal?.throwIfAborted()
+      if (!visionStore.enabled)
+        throw new DOMException('Vision is disabled', 'AbortError')
 
       lastResultText.value = text
       lastResultAt.value = Date.now()
@@ -110,7 +117,8 @@ export const useVisionOrchestratorStore = defineStore('vision-orchestrator', () 
       return { contextUpdates: 0, text }
     }
     catch (error) {
-      recordError(error)
+      if (!payload.signal?.aborted && visionStore.enabled)
+        recordError(error)
       throw error
     }
   }

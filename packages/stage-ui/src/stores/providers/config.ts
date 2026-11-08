@@ -1,11 +1,12 @@
+import type { StorageLike } from '@vueuse/core'
 import type {} from 'pinia-plugin-synced'
 
 import type { InferenceServiceProvider, ProviderValidationStatus } from '../../libs/providers/types'
 import type { ProviderReplicaRow } from '../../services/inference-service-providers'
 import type { ProviderSyncRow, ProviderSyncSnapshot } from './merge'
 
-import { useDebounceFn, useIntervalFn, useLocalStorage } from '@vueuse/core'
-import { isEqual } from 'es-toolkit'
+import { useDebounceFn, useIntervalFn, useLocalStorage, useStorage } from '@vueuse/core'
+import { cloneDeep, isEqual } from 'es-toolkit'
 import { nanoid } from 'nanoid'
 import { defineStore } from 'pinia'
 import { computed, shallowRef, watch } from 'vue'
@@ -22,6 +23,13 @@ const providerStorageOptions = {
   // the leader as a new state proposal.
   listenToStorageChanges: false,
 } as const
+
+let providerStorage: StorageLike | undefined
+
+/** Configure persistence before creating the provider store. Web clients keep the default local storage. */
+export function configureProviderStorage(storage: StorageLike) {
+  providerStorage = storage
+}
 
 const PUSH_DEBOUNCE_MS = 1000
 /** Same idle interval as VS Code Settings Sync. */
@@ -48,10 +56,10 @@ function isUserProvider(provider: InferenceServiceProvider) {
  */
 export const useProviderConfigStore = defineStore('provider-config', () => {
   const authStore = useAuthStore()
-  const providers = useLocalStorage<Record<string, StoredProvider>>('settings/providers/configured', {}, providerStorageOptions)
+  const providers = useStorage<Record<string, StoredProvider>>('settings/providers/configured', {}, providerStorage, providerStorageOptions)
   const addedProviders = useLocalStorage<Record<string, boolean>>('settings/providers/added', {}, providerStorageOptions)
   const pendingDeletes = useLocalStorage<Record<string, string | null>>('settings/providers/pending-deletes', {}, providerStorageOptions)
-  const legacyConfigs = useLocalStorage<Record<string, Record<string, unknown>>>('settings/credentials/providers', {}, providerStorageOptions)
+  const legacyConfigs = useStorage<Record<string, Record<string, unknown>>>('settings/credentials/providers', {}, providerStorage, providerStorageOptions)
 
   const lastLiveRemote = shallowRef<Record<string, ProviderReplicaRow>>({})
   let replicaMerged = false
@@ -212,8 +220,9 @@ export const useProviderConfigStore = defineStore('provider-config', () => {
 
   function ensureProvider(providerId: string, definitionId: string, config: Record<string, unknown> = {}) {
     const current = providers.value[providerId]
+    // The synchronized action returns a snapshot across windows, not a Vue proxy.
     if (current)
-      return current
+      return cloneDeep(current)
 
     const definition = getDefinedProvider(definitionId)
     if (!definition)

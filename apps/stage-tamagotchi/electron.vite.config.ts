@@ -125,6 +125,12 @@ export default defineConfig({
 
   preload: {
     build: {
+      isolatedEntries: true,
+      externalizeDeps: false,
+      // NOTICE:
+      // electron-vite 6 writes rolldownOptions.input without creating the options object.
+      // Source: bundleEntryFile. Remove when its isolation plugin initializes the options.
+      rolldownOptions: {},
       lib: {
         entry: {
           'index': resolve(join(import.meta.dirname, 'src', 'preload', 'index.ts')),

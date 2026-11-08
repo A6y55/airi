@@ -171,4 +171,34 @@ describe('chat orchestrator host options', () => {
 
     expect(speaks).toEqual([true, false, false])
   })
+
+  it('keeps asynchronous recalled evidence inside its turn and out of stored history', async () => {
+    const harness = createHarness()
+    const started = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const stop = harness.runtime.hooks.onBeforeMessageComposed(async (_message, context) => {
+      if (context.sessionId === 'alice') {
+        started.resolve()
+        await release.promise
+      }
+      context.systemPromptSupplement = context.sessionId === 'alice' ? 'Alice drinks tea.' : 'Bob drinks coffee.'
+    })
+    const first = harness.runtime.ingest('What do I drink?', { model: 'test', chatProvider: provider }, 'alice')
+    await started.promise
+    try {
+      await harness.runtime.ingest('What do I drink?', { model: 'test', chatProvider: provider }, 'bob')
+    }
+    finally {
+      release.resolve()
+      await first
+    }
+    expect(harness.prompt(0)).toContain('Bob drinks coffee.')
+    expect(harness.prompt(0)).not.toContain('Alice drinks tea.')
+    expect(harness.prompt(1)).toContain('Alice drinks tea.')
+    expect(harness.prompt(1)).not.toContain('Bob drinks coffee.')
+    expect(JSON.stringify(harness.messages)).not.toContain('drinks')
+    stop()
+    await harness.runtime.ingest('New topic', { model: 'test', chatProvider: provider }, 'alice')
+    expect(harness.prompt(2)).not.toContain('Alice drinks tea.')
+  })
 })

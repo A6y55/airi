@@ -5,6 +5,7 @@ import { AudioInput } from '@proj-airi/pipelines-audio'
 import { createPushStream } from '@proj-airi/stream-kit'
 import { expect, it, vi } from 'vitest'
 
+import { prepareOwnerSpeech } from './owner-speech'
 import { VoiceMessage } from './voice-message'
 
 it('retains an explicitly sent preview after failure and retries with the same session and message identity', async () => {
@@ -153,4 +154,41 @@ it('removes a submitted message when its late transcript has no speech', async (
   await expect.poll(() => message.snapshot.phase).toBe('cancelled')
   expect(message.snapshot.error).toBe('No speech was recognized in the recording')
   expect(deliver).toHaveBeenCalledWith({ messageId: 'late-silent', sessionId: 'alice', transcript: '' })
+})
+
+it('rejects a bystander recording before transcription, attachment encoding, or submission', async () => {
+  const source = createPushStream<PcmBlock>()
+  const submit = vi.fn(async (draft: { messageId: string }) => ({ messageId: draft.messageId }))
+  const transcribe = vi.fn(async () => 'bystander')
+  const message = new VoiceMessage('bystander', 'alice', new AudioInput({ live: true, open: () => source.stream }), submit, transcribe, undefined, (audio, signal) => prepareOwnerSpeech(audio, signal, async () => 0.12))
+  source.write({ range: { sourceId: 'mic', startFrame: 0, endFrame: 16000 }, sampleRate: 16000, channels: [new Float32Array(16000).fill(0.25)] })
+  await expect.poll(() => message.snapshot.phase).toBe('capturing')
+  await message.finish()
+  await expect.poll(() => message.snapshot.phase).toBe('failed')
+  expect(transcribe).not.toHaveBeenCalled()
+  expect(message.snapshot.audio).toBeUndefined()
+  await expect(message.send()).rejects.toThrow('not ready')
+  expect(submit).not.toHaveBeenCalled()
+})
+
+it('keeps the verified final partial window in the voice attachment and transcript', async () => {
+  const source = createPushStream<PcmBlock>()
+  const submit = vi.fn(async (draft: { messageId: string }) => ({ messageId: draft.messageId }))
+  const recognized: number[] = []
+  const message = new VoiceMessage('owner', 'alice', new AudioInput({ live: true, open: () => source.stream }), submit, async (audio) => {
+    for await (const block of audio)
+      recognized.push(block.channels[0].length)
+    return 'owner speech'
+  }, undefined, (audio, signal) => prepareOwnerSpeech(audio, signal, async () => 0.8))
+  source.write({ range: { sourceId: 'mic', startFrame: 0, endFrame: 24000 }, sampleRate: 16000, channels: [new Float32Array(24000).fill(0.25)] })
+  await expect.poll(() => message.snapshot.phase).toBe('capturing')
+  await message.finish()
+  await expect.poll(() => message.snapshot.phase).toBe('ready')
+  let frames = 0
+  for await (const block of fileSource(message.snapshot.audio!).open(new AbortController().signal))
+    frames += block.channels[0].length
+  expect(frames).toBe(24000)
+  expect(recognized).toEqual([16000, 8000])
+  await message.send()
+  expect(submit).toHaveBeenCalledWith(expect.objectContaining({ transcript: 'owner speech' }))
 })

@@ -11,6 +11,7 @@ import {
   useElectronMouseInElement,
   useElectronMouseInWindow,
   useElectronRelativeMouse,
+  useElectronWindowBounds,
 } from '@proj-airi/electron-vueuse'
 import { useModelStore, useThreeSceneIsTransparentAtPoint } from '@proj-airi/stage-ui-three'
 import { HearingStatus, HoloCoupon } from '@proj-airi/stage-ui/components'
@@ -40,7 +41,7 @@ import ControlsIsland from '../components/stage-islands/controls-island/index.vu
 import ResourceStatusIsland from '../components/stage-islands/resource-status-island/index.vue'
 import WindowResizeBorder from '../components/window-resize-border.vue'
 
-import { defaultFullscreenSurface, electronAppIsWayland, electronFullscreenExit, electronFullscreenSetMode, electronMainPageMounted, electronMainWindowEnterFullscreen, electronMainWindowGetFullscreenState, electronMainWindowSetFullscreenBounds, electronOpenInlay, electronOpenOnboarding, electronOpenSettings } from '../../shared/eventa'
+import { defaultFullscreenSurface, electronAppIsWayland, electronAppSupportsGlobalCursorPosition, electronFullscreenExit, electronFullscreenSetMode, electronMainPageMounted, electronMainWindowEnterFullscreen, electronMainWindowGetFullscreenState, electronMainWindowSetFullscreenBounds, electronOpenInlay, electronOpenOnboarding, electronOpenSettings } from '../../shared/eventa'
 import { fullscreenHostPages, fullscreenSurfaceOf } from '../components/fullscreen/surfaces'
 import { useModelSettingsRuntimeOwner } from '../composables/model-settings-runtime-owner'
 import { useFullscreenHost } from '../composables/use-fullscreen-host'
@@ -190,23 +191,28 @@ const isTransparentForMouseEvents = computed(() => {
 const { isNearAnyBorder: isAroundWindowBorder } = useElectronMouseAroundWindowBorder({ threshold: 10 })
 const isAroundWindowBorderFor250Ms = refDebounced(isAroundWindowBorder, 250)
 
-// The controls Island hides while the cursor is away from the window. The edge
-// band counts as the window, because a resize holds the cursor there. On
-// Wayland the cursor signal can stick outside (#2521), so the Island stays.
+// Backend selection controls window movement. Cursor tracking also depends on the desktop session.
 const isWayland = ref(true)
-// A failed probe keeps `true`, so the Island stays shown as before this feature.
+const globalCursorAvailable = ref(false)
 useElectronEventaInvoke(electronAppIsWayland)()
   .then(value => isWayland.value = value)
   .catch(error => console.warn('[Main Page] Failed to detect Wayland; the controls Island stays shown:', errorMessageFrom(error)))
+useElectronEventaInvoke(electronAppSupportsGlobalCursorPosition)()
+  .then(value => globalCursorAvailable.value = value)
+  .catch(error => console.warn('[Main Page] Failed to detect global cursor support; the stage stays interactive:', errorMessageFrom(error)))
 
 // The update launcher keeps a new bundle only when it reports healthy, and rolls it back otherwise. This page reports
 // when the stage stops loading, with the model or with the error surface. A page stuck on loading never reports.
 const reportPageMounted = useElectronEventaInvoke(electronMainPageMounted)
 until(isLoading).toBe(false).then(() => reportPageMounted())
 
-const cursorAwayFromWindow = computed(() => !isWayland.value && isOutsideWindow.value && !isAroundWindowBorder.value)
+const cursorAwayFromWindow = computed(() => globalCursorAvailable.value && isOutsideWindow.value && !isAroundWindowBorder.value)
 
 const setIgnoreMouseEvents = useElectronEventaInvoke(electron.window.setIgnoreMouseEvents)
+const moveStageWindow = useElectronEventaInvoke(electron.window.setBounds)
+const stageWindowBounds = useElectronWindowBounds()
+const stagePointerHeld = ref(false)
+let stagePointer: { id: number, canvas: HTMLCanvasElement, x: number, y: number, windowX: number, windowY: number, windowWidth: number, windowHeight: number, moved: boolean } | undefined
 
 const controlsOverlayActive = computed(() => controlsIslandRef.value?.overlayActive ?? false)
 
@@ -303,6 +309,50 @@ const modelSettingsRuntimeSnapshot = computed<ModelSettingsRuntimeSnapshot>(() =
 
 const fullscreen = useFullscreenStore()
 const { phase: fullscreenPhase, active: fullscreenActive } = storeToRefs(fullscreen)
+
+function holdStagePointer(event: PointerEvent) {
+  const canvas = stageCanvas.value
+  if (event.button !== 0 || !event.isPrimary || !canvas || event.target !== canvas || fullscreenActive.value || isWayland.value || !globalCursorAvailable.value)
+    return
+  stagePointer = { id: event.pointerId, canvas, x: event.screenX, y: event.screenY, windowX: stageWindowBounds.x.value, windowY: stageWindowBounds.y.value, windowWidth: stageWindowBounds.width.value, windowHeight: stageWindowBounds.height.value, moved: false }
+  stagePointerHeld.value = true
+  canvas.setPointerCapture(event.pointerId)
+}
+
+function moveStagePointer(event: PointerEvent) {
+  const held = stagePointer
+  if (!held || held.id !== event.pointerId)
+    return
+  if (!(event.buttons & 1)) {
+    releaseStagePointer(event)
+    return
+  }
+  const dx = event.screenX - held.x
+  const dy = event.screenY - held.y
+  if (!held.moved && Math.hypot(dx, dy) < 6)
+    return
+  held.moved = true
+  event.preventDefault()
+  event.stopPropagation()
+  // Keep the original size while the compositor rounds fractional display coordinates.
+  void moveStageWindow([{ x: Math.round(held.windowX + dx), y: Math.round(held.windowY + dy), width: held.windowWidth, height: held.windowHeight }])
+    .catch(error => console.warn('Could not move the character window:', errorMessageFrom(error)))
+}
+
+function releaseStagePointer(event?: PointerEvent) {
+  const held = stagePointer
+  stagePointer = undefined
+  stagePointerHeld.value = false
+  if (held?.canvas.hasPointerCapture(held.id))
+    held.canvas.releasePointerCapture(held.id)
+  if (held?.moved && event) {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+}
+
+onScopeDispose(() => releaseStagePointer())
+
 const router = useRouter()
 useFullscreenHost()
 const enterFullscreenWindow = useElectronEventaInvoke(electronMainWindowEnterFullscreen)
@@ -587,7 +637,7 @@ watch(fullscreenPhase, (phase) => {
  */
 function handleFadeOnHoverInteractionChange() {
   // Settings cover the work area, so the whole window takes the pointer and the stage never fades.
-  if (stagePaused.value || fullscreenActive.value) {
+  if (stagePointerHeld.value || stagePaused.value || fullscreenActive.value) {
     isIgnoringMouseEvents.value = false
     shouldFadeOnCursorWithin.value = false
     setIgnoreMouseEvents([false, { forward: true }])
@@ -618,13 +668,8 @@ function handleFadeOnHoverInteractionChange() {
     const interaction = resolveFadeOnHoverInteraction({
       alwaysOnTop: alwaysOnTop.value,
       cursorInsideWindow: !isOutsideWindow.value,
-      // NOTICE:
-      // On native Wayland the polled cursor position can stick stale (#2521),
-      // and Electron's setIgnoreMouseEvents `forward` flag is unsupported on
-      // Linux. A click-through window there never gets pointer events back,
-      // so the controls menu can never open. Keep the window interactive.
-      // Removal: reliable Wayland cursor reporting or Linux `forward` support.
-      clickThroughAvailable: !isWayland.value,
+      // XWayland also lacks a reliable global cursor. A full input region keeps native buttons reachable.
+      clickThroughAvailable: globalCursorAvailable.value,
       enabled: fadeOnHoverEnabled.value,
       transparentForFade: isTransparent.value,
       transparentForPointer: isTransparentForMouseEvents.value,
@@ -637,7 +682,7 @@ function handleFadeOnHoverInteractionChange() {
 }
 
 watch(
-  [outsideHearingStatus, outsideAuthStatus, isOutside, isOutsideFor250Ms, isPointerOverStageCanvas, isAroundWindowBorder, isAroundWindowBorderFor250Ms, isOutsideWindow, isTransparent, isTransparentForMouseEvents, controlsOverlayActive, fadeOnHoverEnabled, alwaysOnTop, stagePaused, isWayland, fullscreenActive],
+  [stagePointerHeld, outsideHearingStatus, outsideAuthStatus, isOutside, isOutsideFor250Ms, isPointerOverStageCanvas, isAroundWindowBorder, isAroundWindowBorderFor250Ms, isOutsideWindow, isTransparent, isTransparentForMouseEvents, controlsOverlayActive, fadeOnHoverEnabled, alwaysOnTop, stagePaused, globalCursorAvailable, fullscreenActive],
   handleFadeOnHoverInteractionChange,
   { immediate: true },
 )
@@ -719,6 +764,11 @@ const cursorPosition = computed(() => ({
           'rounded-2xl',
           'transition-opacity duration-250 ease-in-out',
         ]"
+        @pointerdown.capture="holdStagePointer"
+        @pointermove.capture="moveStagePointer"
+        @pointerup.capture="releaseStagePointer"
+        @pointercancel.capture="releaseStagePointer"
+        @lostpointercapture="releaseStagePointer"
       >
         <!--
           Every element that paints over the stage carries the opaque marker,

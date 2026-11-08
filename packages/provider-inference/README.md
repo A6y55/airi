@@ -26,6 +26,12 @@ The host also reports whether it runs on mobile. Chinese and English default to 
 
 Use `@proj-airi/stage-ui` for saved provider configuration, Vue settings views, Pinia state, authentication, and Electron-native providers. Do not use this package to manage those application concerns.
 
+`@proj-airi/provider-inference/minimax-speech` exports the MiniMax bidirectional session protocol without the provider registry.
+The host supplies an authenticated WebSocket. The session queues text until `task_started` and emits PCM chunks within sentence boundaries.
+Text EOF sends `task_finish`. Only `task_finished` completes synthesis, and a premature disconnect reports failure.
+Cancellation closes the socket and ignores later frames. Queue refusals fail explicitly because the protocol does not identify rejected text frames.
+Desktop AIRI supplies the authenticated socket through Eventa and encrypted provider storage. The existing HTTP provider remains available for other clients.
+
 ## Verify
 
 Run the package checks from the workspace root:

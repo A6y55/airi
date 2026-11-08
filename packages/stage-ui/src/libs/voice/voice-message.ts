@@ -51,6 +51,7 @@ export class VoiceMessage {
   private readonly recording: ReturnType<typeof capture>
   private readonly transcription = new AbortController()
   private transcript: Promise<Transcript> | undefined
+  private readonly filtering = new AbortController()
   private settledTranscript: { value: Transcript } | undefined
 
   constructor(
@@ -61,12 +62,25 @@ export class VoiceMessage {
     private readonly submit: (draft: { messageId: string, sessionId: string, audio: Blob, text: string, transcript?: string, transcriptPending?: boolean }) => Promise<{ messageId: string }>,
     transcribe?: (audio: ReadableStream<PcmBlock>, signal: AbortSignal) => Promise<Transcript>,
     private readonly deliverTranscript?: (draft: { messageId: string, sessionId: string, transcript?: string }) => Promise<void>,
+    prepareAudio?: (audio: ReadableStream<PcmBlock>, signal: AbortSignal) => Promise<ReadableStream<PcmBlock> | undefined>,
   ) {
     this.current = { id, sessionId, phase: 'pending' }
     this.recording = capture(input)
-    const [encoded, recognized] = transcribe ? this.recording.stream.tee() : [this.recording.stream]
+    let audio = this.recording.stream
+    let prepared = Promise.resolve()
+    if (prepareAudio) {
+      const filtered = new TransformStream<PcmBlock, PcmBlock>()
+      prepared = prepareAudio(audio, this.filtering.signal).then((source) => {
+        if (!source)
+          throw new NoSpeechError()
+        void source.pipeTo(filtered.writable, { signal: this.filtering.signal }).catch(error => filtered.writable.abort(error).catch(() => {}))
+      })
+      void prepared.catch(error => filtered.writable.abort(error).catch(() => {}))
+      audio = filtered.readable
+    }
+    const [encoded, recognized] = transcribe ? audio.tee() : [audio]
     if (transcribe && recognized) {
-      this.transcript = transcribe(recognized, this.transcription.signal).catch(() => undefined).then((value) => {
+      this.transcript = prepared.then(() => transcribe(recognized, this.transcription.signal)).catch(() => undefined).then((value) => {
         this.settledTranscript = { value }
         return value
       })
@@ -78,6 +92,7 @@ export class VoiceMessage {
     const encoding = encodeWav(encoded, { sampleRate: 16000, channels: 1 })
     // Cancellation and capture failure also reject encoding. The done handler reports those outcomes instead.
     void encoding.catch(() => {})
+    void encoding.finally(() => this.filtering.abort('Voice message filtering ended')).catch(() => {})
     void this.recording.started.then((started) => {
       if (started)
         this.advance('pending', 'capturing')
@@ -114,6 +129,7 @@ export class VoiceMessage {
     if (this.sending || this.receipt)
       return 'closed'
     this.recording.cancel('Voice message discarded')
+    this.filtering.abort('Voice message discarded')
     this.transcription.abort('Voice message discarded')
     this.change({ id: this.id, sessionId: this.sessionId, phase: 'cancelled' })
     return 'cancelled'

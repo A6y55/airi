@@ -19,6 +19,7 @@ import { x } from 'xastscript'
 import { injectKeyPiniaSynced } from '../../libs/pinia/synced-context'
 import { getDefinedProvider } from '../../libs/providers/providers'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, pickOfficialSpeechVoice, picksSpeechVoiceAutomatically } from '../../libs/providers/providers/official'
+import { createMinimaxSpeechStream } from '../../libs/speech/minimax-speech'
 import { streamSpeech } from '../../libs/speech/streaming-pipeline'
 import { useProviderConfigStore } from '../providers/config'
 import { useProviderStore } from '../providers/provider'
@@ -665,20 +666,26 @@ export const useSpeechStore = defineStore('speech', () => {
     }
     if (!model || !voiceId)
       throw new Error('Speech requires a model and voice')
+    if (providerId === 'minimax-speech') {
+      const stream = createMinimaxSpeechStream({ model, voice: voiceId })
+      if (stream)
+        return { ...output, language, stream: (text, signal) => stream(text, AbortSignal.any([signal, synthesisSignal])) }
+    }
     const provider = providersStore.getProviderInstance<SpeechProviderWithExtraOptions<string, Record<string, unknown>>>(providerId)
-    return { ...output, language, synthesize: async (request, signal) => {
+    const synthesize = async (text: string, signal: AbortSignal) => {
       signal = AbortSignal.any([signal, synthesisSignal])
       signal.throwIfAborted()
       const client = await provider
       signal.throwIfAborted()
-      const input = voice && useSSML && canUseSSML ? generateSSML(request.text, voice, { ...config, pitch: pitchValue }) : request.text
+      const input = voice && useSSML && canUseSSML ? generateSSML(text, voice, { ...config, pitch: pitchValue }) : text
       const settings = providerId === OFFICIAL_SPEECH_PROVIDER_ID
         ? { ...config, extraBody: { ...(config.extraBody as Record<string, unknown> | undefined), airi_analytics: { trigger: 'auto', source: 'chat_auto_tts', voice_type: voiceType, turn_id: turn.turnId } } }
         : config
       const audio = await generateSpeech({ ...client.speech(model, settings), input, voice: voiceId, abortSignal: signal })
       signal.throwIfAborted()
       return new Blob([audio])
-    } }
+    }
+    return { ...output, language, synthesize: (request, signal) => synthesize(request.text, signal) }
   }
 
   function withAiriTtsAnalytics(

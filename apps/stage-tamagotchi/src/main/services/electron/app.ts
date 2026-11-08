@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron'
 
-import { env } from 'node:process'
+import { env, platform } from 'node:process'
 
 import { activeBundle } from '@ergosphere-it/electron/main'
 import { defineInvokeHandler } from '@moeru/eventa'
@@ -8,14 +8,20 @@ import { createContext } from '@moeru/eventa/adapters/electron/main'
 import { app, ipcMain, shell } from 'electron'
 import { isLinux, isMacOS, isWindows } from 'std-env'
 
-import { electron, electronAppGetVersion, electronAppIsWayland, electronAppOpenUserDataFolder, electronAppQuit } from '../../../shared/eventa'
-import { resolveIsWayland } from '../../app/ozone'
+import { electron, electronAppGetVersion, electronAppIsWayland, electronAppOpenUserDataFolder, electronAppQuit, electronAppSupportsGlobalCursorPosition } from '../../../shared/eventa'
+import { resolveIsWayland, supportsGlobalCursorPosition } from '../../app/ozone'
 
 export function createAppService(params: { context: ReturnType<typeof createContext>['context'], window: BrowserWindow }) {
   defineInvokeHandler(params.context, electron.app.isMacOS, () => isMacOS)
   defineInvokeHandler(params.context, electron.app.isWindows, () => isWindows)
   defineInvokeHandler(params.context, electron.app.isLinux, () => isLinux)
   defineInvokeHandler(params.context, electronAppIsWayland, () => resolveIsWayland({
+    explicitOzonePlatform: app.commandLine.getSwitchValue('ozone-platform'),
+    ozonePlatformHint: app.commandLine.getSwitchValue('ozone-platform-hint'),
+    env,
+  }))
+  defineInvokeHandler(params.context, electronAppSupportsGlobalCursorPosition, () => supportsGlobalCursorPosition({
+    platform,
     explicitOzonePlatform: app.commandLine.getSwitchValue('ozone-platform'),
     ozonePlatformHint: app.commandLine.getSwitchValue('ozone-platform-hint'),
     env,

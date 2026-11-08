@@ -247,6 +247,7 @@ export const providerMinimaxSpeech = defineProvider<MinimaxSpeechConfig, 'minima
           const body = JSON.parse(init.body) as { input?: string, voice?: string, model?: string }
           const response = await fetch(`${baseUrl}/v1/t2a_v2`, {
             method: 'POST',
+            signal: init.signal,
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${apiKey}`,

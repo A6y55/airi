@@ -929,6 +929,72 @@ describe('airi-card store', () => {
     })
   })
 
+  it('uses saved names for identity while preserving the user description', async () => {
+    const cardStore = useAiriCardStore()
+    await cardStore.initialize()
+    const description = '我以前叫 AIRI，喜欢练武。工具来源是 system:airi-runtime-prompt。'
+    const cardId = await cardStore.addCard({
+      name: '珊璞',
+      nickname: '璞璞',
+      version: '1.0.0',
+      description,
+    }, 'scratch')
+
+    await cardStore.activateCard(cardId)
+
+    expect(cardStore.systemPrompt).toContain('"name":"珊璞"')
+    expect(cardStore.systemPrompt).toContain('"nickname":"璞璞"')
+    expect(cardStore.systemPrompt).toContain(description)
+    expect(cardStore.getCard(cardId)?.description).toBe(description)
+  })
+
+  it('resolves each character identity independently of the active character', async () => {
+    const cardStore = useAiriCardStore()
+    await cardStore.initialize()
+    const firstId = await cardStore.addCard({ name: '珊璞', nickname: '璞璞', version: '1.0.0' }, 'scratch')
+    const secondId = await cardStore.addCard({ name: '茜', nickname: '小茜', version: '1.0.0' }, 'scratch')
+
+    await cardStore.activateCard(firstId)
+
+    expect(cardStore.systemPrompt).toContain('"name":"珊璞"')
+    expect(cardStore.getSystemPrompt(secondId)).toContain('"name":"茜"')
+    expect(cardStore.getSystemPrompt(secondId)).toContain('"nickname":"小茜"')
+    expect(cardStore.getSystemPrompt(secondId)).not.toContain('珊璞')
+    expect(cardStore.getSystemPrompt(secondId)).not.toContain('璞璞')
+
+    await cardStore.activateCard(secondId)
+
+    expect(cardStore.systemPrompt).toContain('"name":"茜"')
+    expect(cardStore.systemPrompt).not.toContain('珊璞')
+    expect(cardStore.getSystemPrompt(firstId)).toContain('"name":"珊璞"')
+    expect(cardStore.getSystemPrompt(firstId)).toContain('"nickname":"璞璞"')
+    expect(cardStore.getSystemPrompt(firstId)).not.toContain('小茜')
+  })
+
+  it('uses edited names on the next prompt without replacing the character description', async () => {
+    const cardStore = useAiriCardStore()
+    await cardStore.initialize()
+    const description = '保留这段用户设定，包括角色的习惯和经历。'
+    const cardId = await cardStore.addCard({
+      name: '旧名字',
+      nickname: '旧昵称',
+      version: '1.0.0',
+      description,
+    }, 'scratch')
+    await cardStore.activateCard(cardId)
+    expect(cardStore.systemPrompt).toContain('"name":"旧名字"')
+    expect(cardStore.getSystemPrompt(cardId)).toContain('"nickname":"旧昵称"')
+
+    await cardStore.updateCard(cardId, { name: '珊璞', nickname: '璞璞', version: '1.0.0' })
+
+    expect(cardStore.systemPrompt).toContain('"name":"珊璞"')
+    expect(cardStore.systemPrompt).toContain('"nickname":"璞璞"')
+    expect(cardStore.systemPrompt).not.toContain('旧名字')
+    expect(cardStore.systemPrompt).not.toContain('旧昵称')
+    expect(cardStore.getSystemPrompt(cardId)).toBe(cardStore.systemPrompt)
+    expect(cardStore.systemPrompt).toContain(description)
+  })
+
   it('keeps position-sensitive CCv3 fields separate from the stable system prompt', async () => {
     const cardStore = useAiriCardStore()
     await cardStore.initialize()
@@ -960,13 +1026,11 @@ describe('airi-card store', () => {
 
     await cardStore.activateCard(cardId)
 
-    expect(cardStore.systemPrompt).toBe([
-      'Follow the character rules.',
-      'A patient field researcher.',
-      'Curious and precise.',
-      'The conversation takes place in an observatory.',
-      'Use the image widget for star charts.',
-    ].join('\n\n'))
+    expect(cardStore.systemPrompt).toContain('Follow the character rules.')
+    expect(cardStore.systemPrompt).toContain('A patient field researcher.')
+    expect(cardStore.systemPrompt).toContain('Curious and precise.')
+    expect(cardStore.systemPrompt).toContain('The conversation takes place in an observatory.')
+    expect(cardStore.systemPrompt).toContain('Use the image widget for star charts.')
     expect(cardStore.systemPrompt).not.toContain('Answer the latest observation')
     expect(cardStore.systemPrompt).not.toContain('Welcome to the observatory')
     expect(cardStore.systemPrompt).not.toContain('What did you find?')

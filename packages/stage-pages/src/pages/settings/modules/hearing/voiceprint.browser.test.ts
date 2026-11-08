@@ -96,6 +96,24 @@ describe('voiceprint settings', () => {
     await expect.poll(() => localStorage.getItem('settings/hearing/speaker-recognition-enabled')).toBe('true')
   })
 
+  it('keeps filtering on after voiceprint deletion and lets the user explicitly turn it off', async () => {
+    localStorage.setItem('settings/voice/voiceprint', JSON.stringify(toStoredVoiceprint({ embedding: new Float32Array([1, 0]), seconds: 8 }, Date.now())))
+    localStorage.setItem('settings/hearing/speaker-recognition-enabled', 'true')
+    const screen = renderPage()
+    const toggle = screen.getByRole('switch')
+
+    await screen.getByRole('button', { name: 'Delete voiceprint' }).click()
+    await screen.getByRole('button', { name: 'Yes' }).click()
+
+    expect(localStorage.getItem('settings/voice/voiceprint')).toBeNull()
+    await expect.element(toggle).toHaveAttribute('aria-checked', 'true')
+    await expect.element(toggle).toBeEnabled()
+    await toggle.click()
+    await expect.element(toggle).toHaveAttribute('aria-checked', 'false')
+    await expect.element(toggle).toBeDisabled()
+    await expect.poll(() => localStorage.getItem('settings/hearing/speaker-recognition-enabled')).toBe('false')
+  })
+
   it('keeps speaker recognition unavailable until the user enrolls', async () => {
     const screen = renderPage()
 

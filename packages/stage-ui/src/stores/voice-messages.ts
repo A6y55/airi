@@ -12,6 +12,7 @@ import { getSpeechBusContext, voiceMessageCommand, voiceMessageDropped, voiceMes
 import { useChatStore } from './chat'
 import { useHearingStore } from './modules/hearing'
 import { useSettingsAudioDevice } from './settings/audio-device'
+import { useSpeakerTrackerStore } from './speaker-tracker'
 import { useVoiceCaptureLeaseStore } from './voice-capture-lease'
 
 /** Resolves when encoding ends. A ready message can then be sent. A failed or discarded one cannot. */
@@ -36,6 +37,7 @@ export const useVoiceMessagesStore = defineStore('voice-messages', () => {
   const chat = useChatStore()
   const hearing = useHearingStore()
   const captureLease = useVoiceCaptureLeaseStore()
+  const speakers = useSpeakerTrackerStore()
   const messages = new Map<string, VoiceMessage>()
   const opened = new Set<string>()
   const isRecording = shallowRef(false)
@@ -79,7 +81,7 @@ export const useVoiceMessagesStore = defineStore('voice-messages', () => {
         replyToMessageId: command.replyToMessageId,
         tools: command.tools,
       })
-    }, hearing.configured ? transcribeRecording : undefined, draft => chat.settleAudioTranscript(draft))
+    }, hearing.configured ? transcribeRecording : undefined, draft => chat.settleAudioTranscript(draft), hearing.speakerRecognitionEnabled ? speakers.prepare : undefined)
     messages.set(command.id, message)
     let submitted = false
     const stop = message.subscribe(() => {
@@ -138,6 +140,12 @@ export const useVoiceMessagesStore = defineStore('voice-messages', () => {
         for (const message of messages.values()) {
           if (['pending', 'capturing'].includes(message.snapshot.phase))
             void message.finish()
+        }
+      }, { flush: 'sync' }),
+      watch(() => hearing.speakerRecognitionEnabled, () => {
+        for (const message of messages.values()) {
+          if (['pending', 'capturing', 'finalizing'].includes(message.snapshot.phase))
+            message.cancel()
         }
       }, { flush: 'sync' }),
     ]

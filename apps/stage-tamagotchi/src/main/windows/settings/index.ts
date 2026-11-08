@@ -34,6 +34,8 @@ export interface SettingsWindowManager {
 }
 
 export function setupSettingsWindowReusableFunc(params: {
+  /** Vision owns a separate window with no settings navigation and an unthrottled capture loop. */
+  surface?: 'settings' | 'vision'
   widgetsManager: WidgetsWindowManager
   autoUpdater: AutoUpdater
   devtoolsWindow: DevtoolsWindowManager
@@ -48,13 +50,14 @@ export function setupSettingsWindowReusableFunc(params: {
   spotlightWindow: SpotlightWindowManager
   ioTraceRecording: IOTraceRecordingService
 }): SettingsWindowManager {
-  const defaultRoute = '/settings'
+  const isVisionWindow = params.surface === 'vision'
+  const defaultRoute = isVisionWindow ? '/vision' : '/settings'
   let currentRoute = defaultRoute
   let settingsContext: Awaited<ReturnType<typeof setupSettingsWindowInvokes>> | undefined
 
   const reusable = createReusableWindow(async () => {
     const window = new BrowserWindow({
-      title: 'Settings',
+      title: isVisionWindow ? 'Screen observation' : 'Settings',
       width: SETTINGS_WINDOW_WIDTH,
       height: 800.0,
       show: false,
@@ -62,6 +65,7 @@ export function setupSettingsWindowReusableFunc(params: {
       webPreferences: {
         preload: getPreloadPath(),
         sandbox: false,
+        backgroundThrottling: !isVisionWindow,
       },
     })
 
@@ -91,6 +95,9 @@ export function setupSettingsWindowReusableFunc(params: {
     // its own devtools instead, so this handler is not in `setupSettingsWindowInvokes`.
     defineInvokeHandler(settingsContext, electronOpenMainDevtools, () => params.getMainWindow?.()?.webContents.openDevTools({ mode: 'detach' }))
 
+    // Capture handlers must exist before the page mounts and checks system permission.
+    initScreenCaptureForWindow(window)
+
     await load(window, withHashRoute(baseUrl(getRendererRoot()), currentRoute, {
       query: { 'synced-leader': 'false' },
     }))
@@ -100,19 +107,17 @@ export function setupSettingsWindowReusableFunc(params: {
         settingsContext = undefined
     })
 
-    initScreenCaptureForWindow(window)
-
     return window
   })
 
   async function openWindow(route?: string) {
-    if (route) {
+    if (route && !isVisionWindow) {
       currentRoute = route
     }
 
     const window = await reusable.getWindow()
 
-    if (route && settingsContext) {
+    if (route && !isVisionWindow && settingsContext) {
       settingsContext.emit(electronSettingsNavigate, { route })
     }
 

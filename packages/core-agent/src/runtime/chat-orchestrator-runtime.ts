@@ -983,7 +983,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
             ...stickers.map(sticker => `<|STICKER ${sticker.id}|>: ${sticker.description}`),
           ].join('\n')
         : ''
-      const systemPromptSupplement = [options.systemPromptSupplement?.trim(), stickerPrompt].filter(Boolean).join('\n\n')
+      const systemPromptSupplement = [options.systemPromptSupplement?.trim(), streamingMessageContext.systemPromptSupplement?.trim(), stickerPrompt].filter(Boolean).join('\n\n')
       if (systemPromptSupplement) {
         const systemMessage = context.turns.find(turn => turn.type === 'system' && turn.authority === 'system')
         if (systemMessage?.type === 'system')

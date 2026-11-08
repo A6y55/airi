@@ -111,7 +111,7 @@ async function loadVoicesWhenConfigured() {
     await speechStore.loadVoicesForProvider(providerId)
   }
   else {
-    console.error('Failed to validate provider config', providerConfig)
+    console.error('Failed to validate MiniMax speech configuration')
   }
 }
 

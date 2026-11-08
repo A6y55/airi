@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolveIsWayland } from './ozone'
+import { resolveIsWayland, supportsGlobalCursorPosition } from './ozone'
 
 describe('resolveIsWayland', () => {
   it('resolves to true when --ozone-platform is explicitly wayland', () => {
@@ -86,5 +86,26 @@ describe('resolveIsWayland', () => {
     expect(resolveIsWayland({
       env: {},
     })).toBe(false)
+  })
+})
+
+describe('global cursor support', () => {
+  it.each([
+    { WAYLAND_DISPLAY: 'wayland-0' },
+    { XDG_SESSION_TYPE: 'wayland' },
+  ])('keeps XWayland interactive when the desktop reports %o', (env) => {
+    expect(supportsGlobalCursorPosition({ platform: 'linux', explicitOzonePlatform: 'x11', env })).toBe(false)
+  })
+
+  it('disables cursor-based click-through on native Wayland without session variables', () => {
+    expect(supportsGlobalCursorPosition({ platform: 'linux', explicitOzonePlatform: 'wayland', env: {} })).toBe(false)
+  })
+
+  it('retains cursor-based click-through in a native X11 session', () => {
+    expect(supportsGlobalCursorPosition({ platform: 'linux', explicitOzonePlatform: 'x11', env: { XDG_SESSION_TYPE: 'x11' } })).toBe(true)
+  })
+
+  it('does not let inherited Linux session variables disable Windows input forwarding', () => {
+    expect(supportsGlobalCursorPosition({ platform: 'win32', env: { WAYLAND_DISPLAY: 'wayland-0' } })).toBe(true)
   })
 })

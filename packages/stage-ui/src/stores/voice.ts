@@ -108,7 +108,41 @@ export const useVoiceStore = defineStore('voice', () => {
 
   const inputTracer = createVoiceInputTracer()
   const { controller, state, snapshot: transcript, error } = useVoiceController({
-    transcriber: () => hearing.createTranscriber(),
+    transcriber: () => {
+      const transcriber = hearing.createTranscriber()
+      const input = controller.activeInput
+      const automatic = !!input && input.cause !== 'control'
+      const turns = automatic ? activeTurns.value.filter(turn => turn.sessionId === input.sessionId) : []
+      if (!hearing.speakerRecognitionEnabled && !turns.length)
+        return transcriber
+      let ownerMatched = false
+      let ownerSilenceMs = 0
+      return speakerTracker.filterTranscriber(transcriber, async () => {
+        if (!automatic)
+          return
+        // A delayed match interrupts only captured responses. A reply that starts meanwhile cannot discard this input.
+        const receipts = await controller.interrupt({ turns, cause: 'speech-input' }).silenced
+        const failed = receipts.find(receipt => receipt.status === 'failed')
+        if (failed)
+          throw failed.error ?? new Error('Playback silence was not confirmed')
+      }, () => input?.cancel('The recording did not match the enrolled voice'), turns.length ? 'interrupt' : 'speech', (activity) => {
+        // Each callback belongs to its captured attempt. Delayed comparisons cannot seal a replacement input.
+        if (!automatic || controller.activeInput !== input || input.state.phase !== 'capturing')
+          return
+        if (activity.matches) {
+          ownerMatched = true
+          ownerSilenceMs = 0
+          return
+        }
+        if (!ownerMatched)
+          return
+        ownerSilenceMs += activity.durationMs
+        // The provider still reads this stream. Seal without awaiting submission, so accepted audio can drain.
+        const limit = hearing.endJudgeEnabled ? VOICE_END_SILENCE.pauseMs + VOICE_END_SILENCE.graceMs : VOICE_END_SILENCE.pauseMs
+        if (ownerSilenceMs >= limit)
+          void input.end()
+      })
+    },
     speech: (turn) => {
       if (!output)
         throw new Error('Voice output host is not connected')
@@ -198,6 +232,11 @@ export const useVoiceStore = defineStore('voice', () => {
     void stopListening()
     presentedInput = undefined
     publishSnapshot()
+  }, { flush: 'sync' })
+
+  // A changed policy must not leave a recording with the previous microphone access rule running.
+  watch(() => hearing.speakerRecognitionEnabled, () => {
+    controller.activeInput?.cancel('Speaker recognition changed')
   }, { flush: 'sync' })
 
   function beginInput(options: BeginSpeechInput) {
@@ -556,6 +595,8 @@ export const useVoiceStore = defineStore('voice', () => {
       },
     })
     const plugin = createVoiceActivityPlugin({
+      // The observer retains this history while it waits for VAD, so a quiet onset can still reach speaker verification.
+      preRollMs: 3000,
       detect: async (window, signal) => {
         const probability = await model.score(window, signal)
         inputTracer.window(window.channels, probability)
@@ -576,7 +617,7 @@ export const useVoiceStore = defineStore('voice', () => {
       // Wake word mode returns no target, so VAD alone cannot start an input. A wake supplies its own target.
       // A call starts an input on speech in every input mode.
       target: () => sessions.activeSessionId && hearing.configured && (callActive.value || startsInputOnSpeech(hearing.inputMode))
-        ? { sessionId: sessions.activeSessionId, interruptTurns: activeTurns.value.filter(turn => turn.sessionId === sessions.activeSessionId) }
+        ? { sessionId: sessions.activeSessionId, interruptTurns: [] }
         : undefined,
     })
 
@@ -629,13 +670,19 @@ export const useVoiceStore = defineStore('voice', () => {
     const sessionId = await sessions.ensureCharacterSession(characterId)
     signal.throwIfAborted()
 
-    return { sessionId, interruptTurns: activeTurns.value.filter(turn => turn.sessionId === sessionId) }
+    return { sessionId, interruptTurns: [] }
   }
 
   function muteWakes(detect: VoiceActivityOptions['detectWakeWord']): VoiceActivityOptions['detectWakeWord'] {
     if (!detect)
       return undefined
-    return async (window, signal, activity) => callActive.value && callMuted.value ? undefined : detect(window, signal, activity)
+    return async (window, signal, activity) => {
+      if (callActive.value && callMuted.value)
+        return undefined
+      const wake = await detect(window, signal, activity)
+      // External detectors select a session, but cannot bypass the owner's interruption check.
+      return wake ? { sessionId: wake.sessionId, interruptTurns: [] } : undefined
+    }
   }
 
   /**

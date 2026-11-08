@@ -47,6 +47,7 @@ import { useSpeechStore } from '../../stores/modules/speech'
 import { useSettingsPresenceBubble } from '../../stores/presence-bubble'
 import { useSettings } from '../../stores/settings'
 import { useSettingsStageModel } from '../../stores/settings/stage-model'
+import { useSpeakerTrackerStore } from '../../stores/speaker-tracker'
 import { useSpeechOutputControlStore } from '../../stores/speech-output-control'
 import { useVoiceStore } from '../../stores/voice'
 
@@ -409,6 +410,7 @@ async function playSpecialToken(
 const lipSyncNode = ref<AudioNode>()
 
 const voice = useVoiceStore()
+const speakerTracker = useSpeakerTrackerStore()
 // Analysis taps (Live2D lip sync, spectrum analyser) read from speechAnalysis,
 // before the user volume. A low playback volume must not change mouth or
 // analyser behavior; VRM and MMD already read the source node directly.
@@ -422,12 +424,17 @@ watch(speechVolume, (volume) => {
 }, { immediate: true })
 const playback = new Playback(new BrowserPlayback(audioContext, {
   destination: speechAnalysis,
-  onSource: (source) => { currentAudioSource.value = source },
+  onSource: (source) => {
+    currentAudioSource.value = source
+    if (source.buffer)
+      speakerTracker.observePlayback(source.buffer)
+  },
 }))
 let playingCount = 0
 
 function resetSpeakingState() {
   nowSpeaking.value = false
+  speakerTracker.endPlaybackReference()
   mouthOpenSize.value = 0
 }
 
@@ -440,6 +447,7 @@ watch(() => voice.activeTurns, (turns) => {
 
 const cards = useAiriCardStore()
 const disconnectVoiceOutput = voice.connectOutput((turn) => {
+  speakerTracker.beginPlaybackReference()
   const output = {
     playback,
     onSpecial: (special: string) => void playSpecialToken(special, { turnId: turn.turnId }),
@@ -573,7 +581,6 @@ function holdsVoice(context: { speaks?: boolean }) {
 chatHookCleanups.push(onBeforeMessageComposed(async (_message, context) => {
   if (!holdsVoice(context))
     return
-  voice.startResponse(context)
   if (context.sessionId === chatSession.activeSessionId)
     resetAssistantSpeechSurface('new-message')
   setupAnalyser()
@@ -581,8 +588,11 @@ chatHookCleanups.push(onBeforeMessageComposed(async (_message, context) => {
 }))
 
 chatHookCleanups.push(onBeforeSend(async (_message, context) => {
-  if (holdsVoice(context))
-    currentMotion.value = { group: EmotionThinkMotionName }
+  if (!holdsVoice(context))
+    return
+  // Prompt hooks can wait on memory before persistence. Only persisted inputs can expose an interruptible response.
+  voice.startResponse({ sessionId: context.sessionId, turnId: context.turnId })
+  currentMotion.value = { group: EmotionThinkMotionName }
 }))
 
 chatHookCleanups.push(onTokenLiteral(async (literal, context) => {

@@ -84,4 +84,17 @@ describe('fade on hover interaction', () => {
 
     expect(interaction.ignoreMouseEvents).toBe(false)
   })
+
+  it('keeps the stage visible when it cannot pass clicks through hidden content', () => {
+    const interaction = resolveFadeOnHoverInteraction({
+      alwaysOnTop: true,
+      cursorInsideWindow: true,
+      clickThroughAvailable: false,
+      enabled: true,
+      transparentForFade: false,
+      transparentForPointer: false,
+    })
+
+    expect(interaction).toEqual({ fadeStage: false, ignoreMouseEvents: false })
+  })
 })

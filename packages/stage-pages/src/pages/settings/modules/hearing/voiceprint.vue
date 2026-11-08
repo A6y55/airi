@@ -162,11 +162,11 @@ const resultClasses = {
     </SettingsCard>
 
     <SettingsCard>
-      <!-- The setting keeps its value without a usable voiceprint, but the voice host compares nothing then. -->
+      <!-- A missing voiceprint blocks speech while recognition stays on. The user can still turn it off here. -->
       <FieldCheckbox
         v-model="speakerRecognitionEnabled"
         data-testid="speaker-recognition"
-        :disabled="!voiceprints.voiceprint"
+        :disabled="!voiceprints.voiceprint && !speakerRecognitionEnabled"
         :label="t('settings.pages.modules.hearing.voiceprint.speaker-recognition.label')"
         :description="t('settings.pages.modules.hearing.voiceprint.speaker-recognition.description')"
       />

@@ -20,11 +20,10 @@ const RETURN_HOME_DELAY_MS = 5000
 const { t } = useI18n()
 const presence = useTemplateRef<InstanceType<typeof VoicePresence>>('presence')
 const returnHome = useElectronEventaInvoke(electronInlayReturnHome)
-// The window stays above other apps, so only what the page paints takes the pointer.
-const { hitTest } = useChatFloatingClickThrough({ pinned: true })
-
 /** The view that `VoicePresence` paints. The window owns hit testing and its home position around it. */
 const shown = shallowRef<VoicePresenceView>('hidden')
+// A hidden voice layer must keep passing input to the desktop.
+const { hitTest } = useChatFloatingClickThrough({ pinned: true, contentVisible: () => shown.value !== 'hidden' })
 
 // Content that appears or moves under a still cursor changes what the cursor is over.
 // The hit test treats zero opacity as unpainted, and a transition starts or ends at zero opacity.

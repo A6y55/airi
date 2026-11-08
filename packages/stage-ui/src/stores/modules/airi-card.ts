@@ -116,6 +116,13 @@ function resolveSystemPrompt(
   // Position-sensitive CCv3 fields are deliberately excluded until provider
   // message assembly owns their ordering and role semantics.
   const systemPromptParts = [
+    [
+      `Current character identity: ${JSON.stringify({ name: card.name, nickname: card.nickname })}`,
+      'Use these saved names as your current identity.',
+      'Older names in character text or earlier messages do not override this identity.',
+      'Application names and tool source labels identify software, not your character.',
+      'Keep all other character settings and instructions.',
+    ].join('\n'),
     card.systemPrompt,
     card.description,
     card.personality,

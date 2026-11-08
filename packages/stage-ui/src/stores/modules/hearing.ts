@@ -349,7 +349,7 @@ export const useHearingStore = defineStore('hearing-store', () => {
   const rephraseEnabled = useLocalStorageManualReset<boolean>('settings/hearing/rephrase-enabled', true, persistenceOptions)
   // A chat model reads paused transcripts and ends finished messages before the silence limit.
   const endJudgeEnabled = useLocalStorageManualReset<boolean>('settings/hearing/end-judge-enabled', true, persistenceOptions)
-  // Speaker recognition compares each voice input with the saved voiceprint and traces the score. It changes no input.
+  // Speaker recognition filters microphone speech before transcription or voice message recording.
   const speakerRecognitionEnabled = useLocalStorageManualReset<boolean>('settings/hearing/speaker-recognition-enabled', false, persistenceOptions)
   // An empty provider uses the chat model of the consciousness module.
   const rephraseProvider = useLocalStorageManualReset('settings/hearing/rephrase-provider', '', persistenceOptions)

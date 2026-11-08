@@ -1,0 +1,33 @@
+title: 本地伙伴
+description: MiniMax 对话与 SAG2 长期记忆
+keys: API 连接
+provider-note: 聊天与语音使用你已配置的 MiniMax。记忆使用 OpenCode 的 Jev 1.13 Free，当前无需 API Key。
+save: 保存设置
+saved: 设置已保存
+test-jev: 测试 Jev
+connected: 连接已验证
+memory: 长期记忆
+memory-enabled: 归档对话并召回相关记忆
+memory-description: 每个角色使用独立的本地归档。空闲时不发起记忆请求。
+sag-path: SAG 可执行文件
+sag-version: 'SAG 版本：{version}'
+archive-path: '归档位置：{path}'
+reload: 刷新记忆列表
+empty: 当前角色还没有记忆。
+edit: 编辑选中的记忆
+save-memory: 保存记忆
+delete-memory: 删除记忆
+export: 导出当前角色的记忆
+exported: '已导出到 {path}'
+clear: 清空当前角色记忆并开始新对话
+confirm-clear: 删除当前角色的长期记忆并开始新对话；旧聊天保留在历史中，不再作为本轮上下文。角色卡和其他配置不变。
+cleared: 记忆已清空，新对话已开始，角色卡和其他配置已保留。
+query: 检索当前角色的记忆
+search: 检索
+sources: '{count} 个来源文件'
+no-results: 没有找到相关记忆。
+recall-failed: 暂时查不到长期记忆，当前聊天可以继续。
+archive-failed: 记忆归档需要处理，请打开“本地伙伴”设置。
+privacy: 麦克风、屏幕观察与桌面操作默认关闭。
+credentials-save-failed: 服务提供商配置未能安全保存，请保持 AIRI 开启并解锁系统密钥环。
+credentials-load-failed: 无法安全读取服务提供商配置，请解锁系统密钥环并重启 AIRI。

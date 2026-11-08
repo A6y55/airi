@@ -561,6 +561,37 @@ describe('chat store contract', () => {
     expect(activeSessionIdRef.value).toBe('session-1')
   })
 
+  it('projects stored interruption records without replaying their conversation snapshots or images', async () => {
+    const event = {
+      eventId: 'interruption-1',
+      turn: {
+        sessionId: 'session-1',
+        turnId: 'cut-off-turn',
+        contexts: [{ content: [{ type: 'image', data: 'data:image/png;base64,PRIVATE-SCREENSHOT' }] }],
+        composedMessage: [{ role: 'user', content: 'Unrelated old conversation snapshot' }],
+      },
+      cause: 'speech-input',
+      playback: { groupId: 'speech-group', status: 'silent' as const, played: [{ clipId: 'clip-1', throughMs: 120 }] },
+    }
+    sessionMetas['session-1'].controlEvents = [event]
+    const requests: Conversation[] = []
+    llmStreamMock.mockImplementation(async (_model: string, _provider: GenerationProvider, context: Conversation, options: StreamOptions) => {
+      requests.push(context)
+      await options.onStreamEvent?.({ type: 'finish' })
+    })
+
+    await useChatStore().submit({ sessionId: 'session-1', messageId: 'new-voice-input', text: 'Continue speaking' })
+    await vi.waitFor(() => expect(requests).toHaveLength(1))
+    const system = requests[0].turns.flatMap(turn => turn.type === 'system'
+      ? turn.content.flatMap(part => part.type === 'text' ? [part.text] : [])
+      : []).join('\n')
+    expect(system).not.toContain('PRIVATE-SCREENSHOT')
+    expect(system).not.toContain('Unrelated old conversation snapshot')
+    expect(system).toContain('cut-off-turn')
+    expect(system).toContain('"throughMs":120')
+    expect(sessionMetas['session-1'].controlEvents).toEqual([event])
+  })
+
   it('resolves the provider and rebuilds prior tools inside the serializable send action', async () => {
     const resolvedToolNames: string[][] = []
     llmStreamMock.mockImplementation(async (_model: string, _chatProvider: GenerationProvider, _messages: Conversation, options: any) => {

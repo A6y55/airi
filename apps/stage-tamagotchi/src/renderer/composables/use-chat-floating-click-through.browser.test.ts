@@ -1,14 +1,16 @@
 import type { MaybeRefOrGetter, ShallowRef, VNode } from 'vue'
 
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui'
-import { describe, expect, it, onTestFinished, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { render } from 'vitest-browser-vue'
 import { defineComponent, h, nextTick, shallowRef, vShow, withDirectives } from 'vue'
 
+import { electronAppSupportsGlobalCursorPosition } from '../../shared/eventa'
 import { dismissOverlays, useChatFloatingClickThrough } from './use-chat-floating-click-through'
 
 const mocks = vi.hoisted(() => ({
   setIgnoreMouseEvents: vi.fn(),
+  supportsGlobalCursor: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
   /** The cursor, which the doubles report the same on the screen and in the window. */
   cursor: undefined as { x: ShallowRef<number>, y: ShallowRef<number> } | undefined,
 }))
@@ -24,8 +26,12 @@ vi.mock('@proj-airi/electron-vueuse', async () => {
   return {
     useElectronMouse: () => mocks.cursor,
     useElectronRelativeMouse: () => mocks.cursor,
-    useElectronEventaInvoke: () => mocks.setIgnoreMouseEvents,
+    useElectronEventaInvoke: (event: unknown) => event === electronAppSupportsGlobalCursorPosition ? mocks.supportsGlobalCursor : mocks.setIgnoreMouseEvents,
   }
+})
+
+beforeEach(() => {
+  mocks.supportsGlobalCursor.mockResolvedValue(true)
 })
 
 /** Mounts a transparent page with a 100px white box under the cursor, hidden until `shown`. */
@@ -36,7 +42,7 @@ async function renderPage() {
   let hitTest = () => {}
   const screen = await render(defineComponent({
     setup() {
-      hitTest = useChatFloatingClickThrough({ pinned: true }).hitTest
+      hitTest = useChatFloatingClickThrough({ pinned: true, contentVisible: shown }).hitTest
       return () => withDirectives(h('div', {
         style: { position: 'fixed', left: '0', top: '0', width: '100px', height: '100px', background: 'white' },
       }), [[vShow, shown.value]])
@@ -54,7 +60,7 @@ async function renderPainted(content: () => VNode, pinned: MaybeRefOrGetter<bool
   let hitTest = () => {}
   const screen = await render(defineComponent({
     setup() {
-      hitTest = useChatFloatingClickThrough({ pinned, passiveArea }).hitTest
+      hitTest = useChatFloatingClickThrough({ pinned, passiveArea, contentVisible: true }).hitTest
       return content
     },
   }))
@@ -65,6 +71,20 @@ async function renderPainted(content: () => VNode, pinned: MaybeRefOrGetter<bool
 const box = { position: 'fixed', left: '0', top: '0', width: '100px', height: '100px' }
 
 describe('useChatFloatingClickThrough', () => {
+  it('recovers a visible Wayland layer without a cursor update and releases it when hidden', async () => {
+    mocks.supportsGlobalCursor.mockResolvedValue(false)
+    const { shown } = await renderPage()
+    mocks.cursor!.x.value = -200
+    mocks.cursor!.y.value = -200
+
+    shown.value = true
+    await vi.waitFor(() => expect(mocks.setIgnoreMouseEvents).toHaveBeenLastCalledWith([false, { forward: true }]))
+    shown.value = false
+    await vi.waitFor(() => expect(mocks.setIgnoreMouseEvents).toHaveBeenLastCalledWith([true, { forward: true }]))
+    shown.value = true
+    await vi.waitFor(() => expect(mocks.setIgnoreMouseEvents).toHaveBeenLastCalledWith([false, { forward: true }]))
+  })
+
   it('takes the pointer when a menu opens under a cursor that does not move', async () => {
     // ROOT CAUSE:
     //
